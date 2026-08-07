@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Yerel Ollama Sohbeti</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #10120f; color: #f3f4ed; }
+    main { width: min(820px, calc(100% - 28px)); margin: 28px auto; }
+    header { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 18px; }
+    h1 { margin: 0; font-size: clamp(1.5rem, 4vw, 2.25rem); }
+    .sub { color: #a9b0a2; margin: 6px 0 0; }
+    label { display: grid; gap: 6px; color: #c9cec4; font-size: .85rem; }
+    input, textarea, button { font: inherit; }
+    input, textarea { color: #f6f7f2; background: #191c18; border: 1px solid #343a31; border-radius: 12px; padding: 12px; }
+    #model { width: 170px; }
+    #messages { min-height: 52vh; max-height: 62vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 18px; background: #151714; border: 1px solid #292e27; border-radius: 18px; }
+    .message { max-width: 86%; padding: 12px 14px; border-radius: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .user { align-self: flex-end; background: #d9ff63; color: #172000; border-bottom-right-radius: 4px; }
+    .assistant { align-self: flex-start; background: #252a23; border-bottom-left-radius: 4px; }
+    .empty { color: #7f8878; margin: auto; text-align: center; }
+    form { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 12px; align-items: end; }
+    textarea { resize: vertical; min-height: 58px; max-height: 180px; }
+    button { border: 0; border-radius: 12px; padding: 14px 20px; background: #d9ff63; color: #172000; font-weight: 750; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: wait; }
+    #status { min-height: 22px; margin: 8px 4px; color: #ffab91; font-size: .9rem; }
+    @media (max-width: 600px) { header { align-items: stretch; flex-direction: column; } #model { width: 100%; } form { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><h1>Yerel Ollama Sohbeti</h1><p class="sub">Mesajlarınız kendi bilgisayarınızdaki modele gider.</p></div>
+      <label>Model <input id="model" value="gemma3:1b" autocomplete="off"></label>
+    </header>
+    <section id="messages" aria-live="polite"><p class="empty">Bir soru yazarak sohbete başlayın.</p></section>
+    <div id="status" role="status"></div>
+    <form id="chat-form">
+      <textarea id="prompt" placeholder="Örneğin: Bana haftalık çalışma planı hazırla…" required></textarea>
+      <button id="send" type="submit">Gönder</button>
+    </form>
+  </main>
+  <script>
+    const history = [];
+    const form = document.querySelector('#chat-form');
+    const promptInput = document.querySelector('#prompt');
+    const modelInput = document.querySelector('#model');
+    const messages = document.querySelector('#messages');
+    const status = document.querySelector('#status');
+    const send = document.querySelector('#send');
+
+    function addMessage(role, content) {
+      messages.querySelector('.empty')?.remove();
+      const item = document.createElement('div');
+      item.className = `message ${role}`;
+      item.textContent = content;
+      messages.appendChild(item);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const content = promptInput.value.trim();
+      if (!content) return;
+      history.push({ role: 'user', content });
+      addMessage('user', content);
+      promptInput.value = '';
+      status.textContent = 'Model düşünüyor…';
+      send.disabled = true;
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ model: modelInput.value.trim(), messages: history })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'İstek başarısız oldu.');
+        history.push({ role: 'assistant', content: data.content });
+        addMessage('assistant', data.content);
+        status.textContent = '';
+      } catch (error) {
+        history.pop();
+        status.textContent = error.message;
+      } finally {
+        send.disabled = false;
+        promptInput.focus();
+      }
+    });
+
+    promptInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>
