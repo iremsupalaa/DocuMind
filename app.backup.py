@@ -8,7 +8,6 @@ import re
 import sqlite3
 import threading
 import time
-import math 
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -43,18 +42,9 @@ ile ver; sayısal ölçümlerde mümkün olduğunda birimleri belirt.
 LIBRARY_SYSTEM_PROMPT = """/no_think
 Sen yerel bir belge kütüphanesini kullanan Türkçe bir asistansın.
 Soruyu yalnızca aşağıdaki güncel belge parçalarına dayanarak cevapla.
-Belgelerde açıkça yazmayan hiçbir bilgiyi tahmin etme veya varsayma.
-Bilgi yetersizse yalnızca "Bu bilgi belgelerde belirtilmiyor." diye cevapla.
+Belgelerde bulunmayan bilgileri uydurma. Bilgi yetersizse bunu açıkça söyle.
 Cevabı kısa, doğrudan ve Türkçe ver. İç planlamanı veya düşünme adımlarını yazma.
 """
-
-EMBEDDING_MODEL = os.environ.get(
-    "EMBEDDING_MODEL",
-    "embeddinggemma"
-)
-
-SEMANTIC_WEIGHT = 0.7
-KEYWORD_WEIGHT = 0.3
 
 
 def clean_model_answer(answer: str) -> str:
@@ -183,61 +173,6 @@ def looks_like_internal_planning(answer: str) -> bool:
     )
     return sum(marker in lowered for marker in markers) >= 2
 
-def ollama_embeddings(metinler):
-    if not metinler:
-        return []
-
-    payload = json.dumps({
-        "model": EMBEDDING_MODEL,
-        "input": metinler,
-        "keep_alive": "30m"
-    }).encode("utf-8")
-
-    request = Request(
-        f"{OLLAMA_URL}/api/embed",
-        data=payload,
-        headers={
-            "Content-Type": "application/json"
-        },
-        method="POST"
-    )
-
-    with urlopen(request, timeout=300) as response:
-        result = json.loads(response.read())
-
-    embeddings = result.get("embeddings", [])
-
-    if len(embeddings) != len(metinler):
-        raise ValueError(
-            "Embedding sayısı metin sayısıyla eşleşmedi."
-        )
-
-    return embeddings
-
-def kosinus_benzerligi(a, b):
-    if not a or len(a) != len(b):
-        return 0.0
-
-    carpim = sum(
-        x * y
-        for x, y in zip(a, b)
-    )
-
-    a_uzunlugu = math.sqrt(
-        sum(x * x for x in a)
-    )
-
-    b_uzunlugu = math.sqrt(
-        sum(y * y for y in b)
-    )
-
-    if not a_uzunlugu or not b_uzunlugu:
-        return 0.0
-
-    return carpim / (
-        a_uzunlugu * b_uzunlugu
-    )
-
 
 class LibraryIndex:
     """Yerel metin dosyalarını SQLite ile sürekli eşitleyen küçük belge indeksi."""
@@ -282,19 +217,11 @@ class LibraryIndex:
                     path TEXT NOT NULL REFERENCES documents(path) ON DELETE CASCADE,
                     chunk_index INTEGER NOT NULL,
                     content TEXT NOT NULL,
-                    embedding TEXT NOT NULL,
                     UNIQUE(path, chunk_index)
                 );
                 CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);
                 PRAGMA optimize;
             """)
-            chunk_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(chunks)")
-            }
-            if "embedding" not in chunk_columns:
-                connection.execute("ALTER TABLE chunks ADD COLUMN embedding TEXT")
-                connection.execute("DELETE FROM documents")
 
     @staticmethod
     def _chunks(text: str, target_size: int = 1200, overlap: int = 180) -> List[str]:
@@ -355,13 +282,6 @@ class LibraryIndex:
                         )
                         continue
 
-                    chunks = self._chunks(content)
-                    embeddings = ollama_embeddings(chunks)
-                    if len(chunks) != len(embeddings):
-                        raise ValueError(
-                            "Parça ve embedding sayıları eşleşmedi."
-                        )
-
                     connection.execute("DELETE FROM documents WHERE path = ?", (relative_path,))
                     connection.execute(
                         "INSERT INTO documents(path, mtime_ns, size, sha256, updated_at) "
@@ -369,18 +289,10 @@ class LibraryIndex:
                         (relative_path, stat.st_mtime_ns, stat.st_size, digest, time.time()),
                     )
                     connection.executemany(
-                        "INSERT INTO chunks(path, chunk_index, content, embedding) "
-                        "VALUES (?, ?, ?, ?)",
+                        "INSERT INTO chunks(path, chunk_index, content) VALUES (?, ?, ?)",
                         [
-                            (
-                                relative_path,
-                                index,
-                                chunk,
-                                json.dumps(embedding),
-                            )
-                            for index, (chunk, embedding) in enumerate(
-                                zip(chunks, embeddings)
-                            )
+                            (relative_path, index, chunk)
+                            for index, chunk in enumerate(self._chunks(content))
                         ],
                     )
                     if previous:
@@ -404,61 +316,32 @@ class LibraryIndex:
         ]
 
     def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Semantik ve kelime puanlarını birleştirerek ilgili parçaları seçer."""
+        """Soru ile ortak anlamlı kelimeleri bulunan en ilgili belge parçalarını seçer."""
         self.sync()
-        query_embedding = ollama_embeddings([query])[0]
-        query_tokens = self._tokens(query)
-
+        tokens = self._tokens(query)
+        if not tokens:
+            return []
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                "SELECT path, chunk_index, content, embedding FROM chunks"
+                "SELECT path, chunk_index, content FROM chunks"
             ).fetchall()
 
-        if not rows:
-            return []
-
-        results: List[Dict[str, Any]] = []
-        highest_keyword_score = 1
-
+        scored: List[Tuple[int, sqlite3.Row]] = []
         for row in rows:
             haystack = f"{row['path']} {row['content']}".casefold()
-            keyword_raw = sum(
-                (3 if token in row["path"].casefold() else 1)
-                * haystack.count(token)
-                for token in query_tokens
-            )
-            highest_keyword_score = max(highest_keyword_score, keyword_raw)
-            semantic_score = max(
-                0.0,
-                kosinus_benzerligi(
-                    query_embedding,
-                    json.loads(row["embedding"]),
-                ),
-            )
-            results.append({
+            score = sum((3 if token in row["path"].casefold() else 1) * haystack.count(token) for token in tokens)
+            if score:
+                scored.append((score, row))
+        scored.sort(key=lambda item: (-item[0], item[1]["path"], item[1]["chunk_index"]))
+        return [
+            {
                 "path": row["path"],
                 "chunk_index": row["chunk_index"],
                 "content": row["content"],
-                "semantic_score": semantic_score,
-                "keyword_raw": keyword_raw,
-            })
-
-        for result in results:
-            keyword_score = result.pop("keyword_raw") / highest_keyword_score
-            result["keyword_score"] = keyword_score
-            result["score"] = (
-                SEMANTIC_WEIGHT * result["semantic_score"]
-                + KEYWORD_WEIGHT * keyword_score
-            )
-
-        results.sort(
-            key=lambda item: (
-                -item["score"],
-                item["path"],
-                item["chunk_index"],
-            )
-        )
-        return results[:limit]
+                "score": score,
+            }
+            for score, row in scored[:limit]
+        ]
 
     def status(self) -> Dict[str, Any]:
         with self._lock, self._connect() as connection:
@@ -633,7 +516,6 @@ def mcp_tools_for_ollama(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def run_agent(
     model: str,
     browser_messages: List[Dict[str, Any]],
-    mode: str = "auto",
 ) -> Tuple[str, List[Dict[str, Any]]]:
     events: List[Dict[str, Any]] = []
     user_query = next((
@@ -649,25 +531,6 @@ def run_agent(
         or "get_device_context" in normalized_query
     ) and any(word in normalized_query for word in ("cihaz", "hava", "ölçüm", "aqi"))
 
-    if mode == "thingsboard":
-        is_thingsboard_request = True
-    elif mode in {"library", "general"}:
-        is_thingsboard_request = False
-
-    if mode == "general":
-        result = ollama_chat(model, [
-            {
-                "role": "system",
-                "content": (
-                    "/no_think\nKısa, doğru ve anlaşılır Türkçe cevap ver. "
-                    "Bilmediğin bilgileri uydurma."
-                ),
-            },
-            *browser_messages,
-        ], [])
-        answer = clean_model_answer(result.get("message", {}).get("content", ""))
-        return answer or "Model bir yanıt üretemedi.", events
-
     if not is_thingsboard_request:
         library_hits = library_index.search(user_query)
         if library_hits:
@@ -681,17 +544,7 @@ def run_agent(
                 "tool": "Library Connector",
                 "ok": True,
                 "result": {
-                    "sources": [
-                        {
-                            "path": hit["path"],
-                            "chunk_index": hit["chunk_index"],
-                            "score": round(hit["score"], 4),
-                            "semantic_score": round(hit["semantic_score"], 4),
-                            "keyword_score": round(hit["keyword_score"], 4),
-                            "content": hit["content"],
-                        }
-                        for hit in library_hits
-                    ],
+                    "sources": sorted({hit["path"] for hit in library_hits}),
                     "chunk_count": len(library_hits),
                 },
             })
@@ -707,17 +560,13 @@ def run_agent(
                 return "Model belge cevabı yerine iç planlama üretti. Soruyu daha kısa yazın.", events
             return answer or "Belgeler bulundu ancak model yanıt üretemedi.", events
 
-        if mode == "library":
-            return "Bu bilgi güncel kütüphane belgelerinde bulunamadı.", events
-
         result = ollama_chat(model, [
             {
                 "role": "system",
                 "content": (
                     "/no_think\nKısa, anlaşılır ve Türkçe cevap ver. "
                     "Kullanıcı yerel kütüphanedeki bir bilgiyi soruyor ancak "
-                    "eşleşen belge bulunamadıysa yalnızca 'Bu bilgi belgelerde "
-                    "bulunamadı.' de. Tahmin, varsayım veya uydurma bilgi ekleme."
+                    "eşleşen belge bulunamadıysa bunu açıkça belirt; bilgi uydurma."
                 ),
             },
             *browser_messages,
@@ -908,15 +757,12 @@ class AppHandler(SimpleHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
             body = json.loads(self.rfile.read(length))
             model = body.get("model", "gemma3:4b")
-            mode = body.get("mode", "auto")
             messages = body.get("messages", [])
-            if mode not in {"auto", "library", "general", "thingsboard"}:
-                mode = "auto"
             if not isinstance(messages, list) or not messages:
                 self._json(400, {"error": "En az bir mesaj gerekli."})
                 return
 
-            content, events = run_agent(model, messages, mode)
+            content, events = run_agent(model, messages)
             self._json(200, {"content": content, "events": events})
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")

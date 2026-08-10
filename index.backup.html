@@ -13,11 +13,9 @@
     h1 { margin: 0; font-size: clamp(1.5rem, 4vw, 2.25rem); }
     .sub { color: #a9b0a2; margin: 6px 0 0; }
     label { display: grid; gap: 6px; color: #c9cec4; font-size: .85rem; }
-    input, textarea, button, select { font: inherit; }
-    input, textarea, select { color: #f6f7f2; background: #191c18; border: 1px solid #343a31; border-radius: 12px; padding: 12px; }
+    input, textarea, button { font: inherit; }
+    input, textarea { color: #f6f7f2; background: #191c18; border: 1px solid #343a31; border-radius: 12px; padding: 12px; }
     #model { width: 170px; }
-    .controls { display: flex; gap: 10px; align-items: end; }
-    #mode { min-width: 150px; }
     #messages { min-height: 52vh; max-height: 62vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 18px; background: #151714; border: 1px solid #292e27; border-radius: 18px; }
     .message { max-width: 86%; padding: 12px 14px; border-radius: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
     .user { align-self: flex-end; background: #d9ff63; color: #172000; border-bottom-right-radius: 4px; }
@@ -27,12 +25,6 @@
     .trace summary { cursor: pointer; padding: 11px 13px; color: #d9ff63; font-size: .88rem; font-weight: 700; }
     .trace.error summary { color: #ffab91; }
     .trace pre { margin: 0; padding: 0 13px 13px; color: #c9cec4; white-space: pre-wrap; overflow-wrap: anywhere; font: .79rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .sources { align-self: flex-start; display: grid; gap: 8px; width: min(94%, 760px); }
-    .source-card { background: #1b1f19; border: 1px solid #3b4435; border-radius: 12px; overflow: hidden; }
-    .source-card summary { cursor: pointer; padding: 11px 13px; color: #d9ff63; font-weight: 700; }
-    .source-card summary:hover { background: #242922; }
-    .source-info { padding: 0 13px 8px; color: #8f9988; font-size: .78rem; }
-    .source-card pre { margin: 0; padding: 0 13px 13px; color: #c9cec4; white-space: pre-wrap; overflow-wrap: anywhere; font: .79rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .badges { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 7px; }
     .badge { display: inline-flex; align-items: center; gap: 6px; color: #8f9988; font-size: .78rem; }
     .dot { width: 7px; height: 7px; border-radius: 50%; background: #d9ff63; box-shadow: 0 0 10px #d9ff6388; }
@@ -42,7 +34,7 @@
     button { border: 0; border-radius: 12px; padding: 14px 20px; background: #d9ff63; color: #172000; font-weight: 750; cursor: pointer; }
     button:disabled { opacity: .55; cursor: wait; }
     #status { min-height: 22px; margin: 8px 4px; color: #ffab91; font-size: .9rem; }
-    @media (max-width: 680px) { header { align-items: stretch; flex-direction: column; } .controls { align-items: stretch; flex-direction: column; } #model, #mode { width: 100%; } form { grid-template-columns: 1fr; } }
+    @media (max-width: 600px) { header { align-items: stretch; flex-direction: column; } #model { width: 100%; } form { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -56,17 +48,7 @@
           <span class="badge" id="library-status"><span class="dot"></span> Library Connector kontrol ediliyor…</span>
         </div>
       </div>
-      <div class="controls">
-        <label>Çalışma modu
-          <select id="mode">
-            <option value="auto">Otomatik</option>
-            <option value="library">Kütüphane</option>
-            <option value="general">Genel sohbet</option>
-            <option value="thingsboard">ThingsBoard</option>
-          </select>
-        </label>
-        <label>Model <input id="model" value="gemma3:4b" autocomplete="off"></label>
-      </div>
+      <label>Model <input id="model" value="gemma3:4b" autocomplete="off"></label>
     </header>
     <section id="messages" aria-live="polite"><p class="empty">Bir soru yazarak sohbete başlayın.</p></section>
     <div id="status" role="status"></div>
@@ -80,7 +62,6 @@
     const form = document.querySelector('#chat-form');
     const promptInput = document.querySelector('#prompt');
     const modelInput = document.querySelector('#model');
-    const modeInput = document.querySelector('#mode');
     const messages = document.querySelector('#messages');
     const status = document.querySelector('#status');
     const send = document.querySelector('#send');
@@ -93,41 +74,17 @@
       item.textContent = content;
       messages.appendChild(item);
       messages.scrollTop = messages.scrollHeight;
-      return item;
-    }
-
-    function addSources(sources = []) {
-      if (!sources.length) return;
-      const container = document.createElement('div');
-      container.className = 'sources';
-      for (const source of sources) {
-        const details = document.createElement('details');
-        details.className = 'source-card';
-        const summary = document.createElement('summary');
-        summary.textContent = `${source.path} · Parça ${source.chunk_index + 1}`;
-        const info = document.createElement('div');
-        info.className = 'source-info';
-        info.textContent = `Toplam %${Math.round(source.score * 100)} · Semantik %${Math.round(source.semantic_score * 100)} · Kelime %${Math.round(source.keyword_score * 100)}`;
-        const content = document.createElement('pre');
-        content.textContent = source.content;
-        details.append(summary, info, content);
-        container.appendChild(details);
-      }
-      messages.appendChild(container);
-      messages.scrollTop = messages.scrollHeight;
     }
 
     function addToolEvents(events = []) {
       for (const event of events) {
-        if (event.type === 'library_retrieval') {
-          addSources(event.result?.sources || []);
-          continue;
-        }
         const details = document.createElement('details');
         details.className = `trace ${event.ok === false ? 'error' : ''}`;
         details.open = event.type === 'tool_call';
         const summary = document.createElement('summary');
-        summary.textContent = event.type === 'tool_call'
+        summary.textContent = event.type === 'library_retrieval'
+          ? `Kütüphaneden güncel bağlam alındı · ${event.tool}`
+          : event.type === 'tool_call'
             ? `MCP aracı çağrıldı · ${event.tool}`
             : `${event.ok ? 'MCP sonucu başarılı' : 'MCP sonucu hatalı'} · ${event.tool}`;
         const body = document.createElement('pre');
@@ -156,11 +113,7 @@
         const response = await fetch('/api/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model: modelInput.value.trim(),
-            mode: modeInput.value,
-            messages: history
-          })
+          body: JSON.stringify({ model: modelInput.value.trim(), messages: history })
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'İstek başarısız oldu.');
