@@ -642,6 +642,16 @@ def run_agent(
         if message.get("role") == "user"
     ), "")
     normalized_query = user_query.casefold()
+    thingsboard_terms = (
+        "thingsboard", "cihaz", "telemetri", "sensör", "sensor",
+        "hava kalitesi", "ölçüm", "sıcaklık", "sicaklik", "nem",
+        "co₂", "co2", "pm2.5", "pm10", "voc", "aqi", "batarya",
+        "list_air_quality_devices", "get_latest_air_quality",
+        "get_device_context",
+    )
+    has_thingsboard_intent = any(
+        term in normalized_query for term in thingsboard_terms
+    )
     is_thingsboard_request = (
         "thingsboard" in normalized_query
         or "list_air_quality_devices" in normalized_query
@@ -650,6 +660,13 @@ def run_agent(
     ) and any(word in normalized_query for word in ("cihaz", "hava", "ölçüm", "aqi"))
 
     if mode == "thingsboard":
+        if not has_thingsboard_intent:
+            return (
+                "ThingsBoard modu yalnızca cihaz, sensör ve telemetri "
+                "sorularını yanıtlar. Kütüphane soruları için çalışma "
+                "modunu 'Kütüphane' olarak değiştirin.",
+                events,
+            )
         is_thingsboard_request = True
     elif mode in {"library", "general"}:
         is_thingsboard_request = False
