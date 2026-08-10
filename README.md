@@ -152,4 +152,4 @@ Sonra `http://127.0.0.1:8081` adresini açın.
 - Docker ile paketleme
 
 Uygulama yalnızca `127.0.0.1` üzerinde dinlediği için yerel makinenizden erişilebilir. İnternete açmadan önce kimlik doğrulama, HTTPS, oran sınırlama ve girdi kontrolleri ekleyin.
-# ollama-chat-app
+
