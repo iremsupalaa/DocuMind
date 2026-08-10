@@ -1,6 +1,6 @@
 # Ollama ile Yerel Yapay Zekâ Uygulaması
 
-Bu proje, tarayıcıdan prompt gönderip bilgisayarınızda çalışan Ollama modelinden cevap alabileceğiniz küçük bir sohbet uygulamasıdır. Python dışında ek bir paket gerektirmez.
+Bu proje, tarayıcıdan prompt gönderip bilgisayarınızda çalışan Ollama modelinden cevap alabileceğiniz küçük bir sohbet uygulamasıdır. Ayrıca ThingsBoard MCP sunucusundaki araçları otomatik keşfeder; araç çağrılarını, parametreleri, sonuçları ve modelin Türkçe değerlendirmesini web arayüzünde gösterir. Python dışında ek bir paket gerektirmez.
 
 ## 1. Ollama nedir?
 
@@ -9,7 +9,8 @@ Ollama, büyük dil modellerini bilgisayarınızda indirmenizi, çalıştırman�
 Temel akış şöyledir:
 
 ```text
-Kullanıcı → Tarayıcı arayüzü → Python sunucusu → Ollama API → Yerel model
+Kullanıcı → Tarayıcı → Python sunucusu → Ollama/Qwen3
+                                      ↘ MCP → ThingsBoard
 ```
 
 ## 2. Neden kullanılır?
@@ -70,7 +71,7 @@ ollama run gemma3:1b
 Terminalde bu proje klasörüne geçin:
 
 ```bash
-cd "/Users/iremsupalaa/Documents/Codex/2026-08-07/ollamay-kurman-ve-kurcalaman-istiyorum-herhangi/outputs/ollama-chat-app"
+cd "/Users/iremsupalaa/Documents/Codex/2026-08-07/ollama/outputs/ollama-chat-app"
 python3 app.py
 ```
 
@@ -90,7 +91,13 @@ Metin kutusuna sorunuzu yazıp **Gönder** düğmesine basın. Enter gönderir; 
 4. Modelin cevabı Python sunucusu üzerinden tarayıcıya döner.
 5. Tarayıcı, konuşma geçmişini sonraki isteğe eklediği için model sohbetin bağlamını hatırlar.
 
-Tarayıcının Ollama'ya doğrudan bağlanması yerine küçük bir arka uç kullanmak, ileride doğrulama, erişim kontrolü, kayıt tutma veya farklı model sağlayıcıları eklemeyi kolaylaştırır.
+Tarayıcının Ollama'ya doğrudan bağlanması yerine küçük bir arka uç kullanmak, MCP oturumunu ve araç çağrılarını güvenli biçimde yönetmeyi kolaylaştırır. Web arayüzü her araç çağrısını ve ThingsBoard sonucunu açılır kartlar halinde gösterir.
+
+MCP sunucusu farklı bir adreste çalışıyorsa uygulamayı şöyle başlatın:
+
+```bash
+MCP_URL=http://127.0.0.1:8000/mcp python3 app.py
+```
 
 ## 8. Başka model kullanmak
 
