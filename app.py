@@ -35,6 +35,126 @@ def clean_model_answer(answer: str) -> str:
     return re.sub(r"^<think>.*?</think>", "", answer, flags=re.DOTALL).strip()
 
 
+def result_data(result: Dict[str, Any]) -> Dict[str, Any]:
+    """MCP sonucundaki yapılandırılmış veriyi, yoksa metin JSON'unu döndürür."""
+    structured = result.get("structuredContent")
+    if isinstance(structured, dict):
+        return structured
+    for item in result.get("content", []):
+        if item.get("type") == "text":
+            try:
+                parsed = json.loads(item.get("text", ""))
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+    return {}
+
+
+def latest_value(telemetry: Dict[str, Any], key: str) -> Optional[str]:
+    values = telemetry.get(key)
+    if isinstance(values, list) and values:
+        return str(values[0].get("value", "-"))
+    if values is not None:
+        return str(values)
+    return None
+
+
+def format_air_quality_result(
+    devices: List[Dict[str, Any]],
+    context: Optional[Dict[str, Any]] = None,
+    measurements: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Sık kullanılan hava kalitesi sorgularını modelsiz ve güvenilir biçimde biçimler."""
+    if not devices:
+        return "ThingsBoard hesabında hava kalitesi cihazı bulunamadı."
+
+    lines = [f"ThingsBoard hesabında {len(devices)} cihaz bulundu:"]
+    for index, device in enumerate(devices, 1):
+        lines.append(
+            f"{index}. {device.get('name', 'Adsız cihaz')} "
+            f"(ID: {device.get('id', '-')}, tür: {device.get('type', '-')})"
+        )
+
+    first = devices[0]
+    if context:
+        attributes = context.get("attributes", context)
+        if isinstance(attributes, list):
+            attributes = {
+                item.get("key"): item.get("value")
+                for item in attributes
+                if isinstance(item, dict) and item.get("key")
+            }
+        if isinstance(attributes, dict):
+            details = []
+            for key, label in (
+                ("building", "bina"), ("floor", "kat"), ("room", "oda"),
+                ("model", "model"), ("firmwareVersion", "firmware"),
+            ):
+                if attributes.get(key) is not None:
+                    details.append(f"{label}: {attributes[key]}")
+            if details:
+                lines.append(f"İlk cihazın bilgileri — {', '.join(details)}.")
+
+    if measurements:
+        telemetry = measurements.get("telemetry", measurements)
+        labels = (
+            ("temperature", "sıcaklık", "°C"),
+            ("humidity", "nem", "%"),
+            ("co2", "CO₂", "ppm"),
+            ("pm25", "PM2.5", "µg/m³"),
+            ("pm10", "PM10", "µg/m³"),
+            ("voc", "VOC", ""),
+            ("aqi", "AQI", ""),
+            ("battery", "batarya", "%"),
+        )
+        values = []
+        for key, label, unit in labels:
+            value = latest_value(telemetry, key)
+            if value is not None:
+                values.append(f"{label}: {value}{unit}")
+        if values:
+            lines.append(f"{first.get('name', 'İlk cihaz')} son ölçümleri — {', '.join(values)}.")
+        aqi = latest_value(telemetry, "aqi")
+        if aqi is not None:
+            try:
+                aqi_number = float(aqi)
+                level = (
+                    "iyi" if aqi_number <= 50 else
+                    "orta" if aqi_number <= 100 else
+                    "hassas gruplar için sağlıksız" if aqi_number <= 150 else
+                    "sağlıksız"
+                )
+                lines.append(f"Kısa değerlendirme: AQI {aqi}, hava kalitesi {level} seviyededir.")
+            except ValueError:
+                pass
+    return "\n\n".join(lines)
+
+
+def tool_error_message(result: Dict[str, Any]) -> Optional[str]:
+    """MCP araç hatasını kullanıcıya gösterilebilecek kısa metne dönüştürür."""
+    if not result.get("isError", False):
+        return None
+    if result.get("error"):
+        return str(result["error"])
+    texts = [
+        str(item.get("text", ""))
+        for item in result.get("content", [])
+        if isinstance(item, dict) and item.get("type") == "text"
+    ]
+    return " ".join(filter(None, texts)) or "Bilinmeyen MCP araç hatası."
+
+
+def looks_like_internal_planning(answer: str) -> bool:
+    """Modelin son cevap yerine İngilizce iç planlama üretip üretmediğini saptar."""
+    lowered = answer.casefold()
+    markers = (
+        "okay, the user", "the user wants me", "first, i need",
+        "wait, the user", "let me check the tools", "i should call",
+    )
+    return sum(marker in lowered for marker in markers) >= 2
+
+
 class MCPClient:
     """Streamable HTTP kullanan küçük, bağımlılıksız MCP istemcisi."""
 
@@ -189,6 +309,86 @@ def run_agent(
         mcp_tools = mcp.list_tools()
         known_tools = {tool["name"] for tool in mcp_tools}
         tools = mcp_tools_for_ollama(mcp_tools)
+
+        user_query = next((
+            str(message.get("content", ""))
+            for message in reversed(browser_messages)
+            if message.get("role") == "user"
+        ), "")
+        normalized_query = user_query.casefold()
+        is_thingsboard_request = (
+            "thingsboard" in normalized_query
+            or "list_air_quality_devices" in normalized_query
+            or "get_latest_air_quality" in normalized_query
+            or "get_device_context" in normalized_query
+        ) and any(word in normalized_query for word in ("cihaz", "hava", "ölçüm", "aqi"))
+
+        if is_thingsboard_request:
+            def call_and_record(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+                events.append({"type": "tool_call", "tool": name, "arguments": arguments})
+                try:
+                    result = mcp.call_tool(name, arguments)
+                except Exception as exc:
+                    result = {"isError": True, "error": str(exc)}
+                events.append({
+                    "type": "tool_result",
+                    "tool": name,
+                    "ok": not bool(result.get("isError", False)),
+                    "result": result,
+                })
+                return result
+
+            list_result = call_and_record(
+                "list_air_quality_devices", {"page_size": 10, "search": ""}
+            )
+            error = tool_error_message(list_result)
+            if error:
+                return f"ThingsBoard cihazları alınamadı: {error}", events
+
+            devices_payload = result_data(list_result)
+            devices = devices_payload.get("devices", [])
+            if not isinstance(devices, list):
+                devices = []
+
+            wants_context = any(word in normalized_query for word in (
+                "konum", "model", "firmware", "bina", "oda", "kat",
+                "get_device_context",
+            ))
+            wants_measurements = any(word in normalized_query for word in (
+                "ölçüm", "sıcaklık", "sicaklik", "nem", "co₂", "co2",
+                "pm2.5", "pm10", "voc", "aqi", "batarya", "değerlendir",
+                "get_latest_air_quality",
+            ))
+
+            context_payload: Optional[Dict[str, Any]] = None
+            measurements_payload: Optional[Dict[str, Any]] = None
+            if devices and (wants_context or wants_measurements):
+                device_id = str(devices[0].get("id", ""))
+                if not device_id:
+                    return "İlk cihazın kimliği ThingsBoard yanıtında bulunamadı.", events
+
+                if wants_context:
+                    context_result = call_and_record(
+                        "get_device_context", {"device_id": device_id}
+                    )
+                    error = tool_error_message(context_result)
+                    if error:
+                        return f"Cihaz bilgileri alınamadı: {error}", events
+                    context_payload = result_data(context_result)
+
+                if wants_measurements:
+                    measurements_result = call_and_record(
+                        "get_latest_air_quality", {"device_id": device_id}
+                    )
+                    error = tool_error_message(measurements_result)
+                    if error:
+                        return f"Son hava kalitesi ölçümleri alınamadı: {error}", events
+                    measurements_payload = result_data(measurements_result)
+
+            return format_air_quality_result(
+                devices, context_payload, measurements_payload
+            ), events
+
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT},
             *browser_messages,
@@ -203,6 +403,11 @@ def run_agent(
 
             if not tool_calls:
                 content = clean_model_answer(assistant_message.get("content", ""))
+                if looks_like_internal_planning(content):
+                    return (
+                        "Model araç çağrısına geçemedi. İsteği daha kısa biçimde "
+                        "yeniden gönderin.", events
+                    )
                 return content or "Model bir yanıt üretemedi.", events
 
             for call in tool_calls:
@@ -318,4 +523,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nSunucu durduruldu.")
     finally:
+        server.server_close()
         server.server_close()
