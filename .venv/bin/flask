@@ -1,0 +1,6 @@
+#!/Users/iremsupalaa/Documents/Codex/2026-08-07/ollama/outputs/ollama-chat-app/.venv/bin/python
+import sys
+from flask.cli import main
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(main())

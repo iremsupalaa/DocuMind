@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  >
+  <title>Ollama · Giriş</title>
+
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      background: #10120f;
+      color: #f3f4ed;
+    }
+
+    .login-card {
+      width: min(420px, calc(100% - 32px));
+      padding: 32px;
+      background: #191c18;
+      border: 1px solid #343a31;
+      border-radius: 20px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+    }
+
+    .subtitle {
+      margin: 0 0 24px;
+      color: #a9b0a2;
+    }
+
+    form {
+      display: grid;
+      gap: 16px;
+    }
+
+    label {
+      display: grid;
+      gap: 7px;
+      color: #c9cec4;
+      font-size: 0.9rem;
+    }
+
+    input {
+      width: 100%;
+      padding: 13px;
+      border: 1px solid #343a31;
+      border-radius: 12px;
+      background: #10120f;
+      color: #f3f4ed;
+      font: inherit;
+    }
+
+    button {
+      padding: 13px;
+      border: 0;
+      border-radius: 12px;
+      background: #d9ff63;
+      color: #172000;
+      font: inherit;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .error {
+      padding: 11px;
+      border: 1px solid #78483b;
+      border-radius: 10px;
+      background: #2d1d19;
+      color: #ffab91;
+    }
+  </style>
+</head>
+
+<body>
+  <main class="login-card">
+    <h1>Ollama’ya giriş</h1>
+
+    <p class="subtitle">
+      Kendi belge kütüphanenize erişmek için giriş yapın.
+    </p>
+
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
+
+    <form method="post">
+      <input
+        type="hidden"
+        name="csrf_token"
+        value="{{ csrf_token() }}"
+      >
+
+      <label>
+        Kullanıcı adı
+
+        <input
+          type="text"
+          name="username"
+          autocomplete="username"
+          required
+          autofocus
+        >
+      </label>
+
+      <label>
+        Parola
+
+        <input
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          required
+        >
+      </label>
+
+      <button type="submit">Giriş yap</button>
+    </form>
+  </main>
+</body>
+</html>
