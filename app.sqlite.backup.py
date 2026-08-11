@@ -221,7 +221,7 @@ def ollama_embeddings(metinler):
 
 
 class LibraryIndex:
-#Yerel metin dosyalarını PostgreSQL + pgvector ile sürekli eşitler
+    """Yerel metin dosyalarını PostgreSQL + pgvector ile sürekli eşitler."""
 
     SUPPORTED_SUFFIXES = {".txt", ".md"}
     STOP_WORDS = {
@@ -232,16 +232,16 @@ class LibraryIndex:
     }
 
     def __init__(self, folder: Path, database_url: str):
-        self.folder = folder #izlenecek klasörü saklar
-        self.database_url = database_url #bağlantı adresini saklar 
-        self._lock = threading.Lock() #aynı anda 2 eşitleme yapılmasını engeller
-        self._stop = threading.Event() #izleyiciyi durdurabilmek için event oluşturur
+        self.folder = folder
+        self.database_url = database_url
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
         self.last_sync_at: Optional[float] = None
         self.last_error: Optional[str] = None
         self.folder.mkdir(parents=True, exist_ok=True)
         self._initialize_database()
 
-    def _connect(self) -> psycopg.Connection: #POSTEGRESQL BAĞLANTISI
+    def _connect(self) -> psycopg.Connection:
         connection = psycopg.connect(
             self.database_url,
             row_factory=dict_row,
@@ -249,7 +249,7 @@ class LibraryIndex:
         register_vector(connection)
         return connection
 
-    def _initialize_database(self) -> None: #tablo oluşturmak için post. tablosunu açar.
+    def _initialize_database(self) -> None:
         with psycopg.connect(
             self.database_url,
             autocommit=True,
@@ -260,13 +260,13 @@ class LibraryIndex:
 
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS documents (
-                    path TEXT PRIMARY KEY, #dosya yolu
-                    mtime_ns BIGINT NOT NULL, #son değişiklik zamanı
-                    size BIGINT NOT NULL, #boyut
-                    sha256 TEXT NOT NULL, #hash
+                    path TEXT PRIMARY KEY,
+                    mtime_ns BIGINT NOT NULL,
+                    size BIGINT NOT NULL,
+                    sha256 TEXT NOT NULL,
                     embedding_model TEXT NOT NULL,
                     embedding_dim INTEGER NOT NULL,
-                    updated_at DOUBLE PRECISION NOT NULL #son yedekleme
+                    updated_at DOUBLE PRECISION NOT NULL
                 )
             """)
             connection.execute("""
@@ -321,11 +321,11 @@ class LibraryIndex:
         return chunks
 
     def sync(self) -> Dict[str, int]:
-        #eklenen ya da değişen belgeleri indeksler, silinenleri veritabanından kaldırır.
+        """Eklenen/değişen belgeleri indeksler, silinenleri veritabanından kaldırır."""
         with self._lock:
             discovered: Dict[str, Path] = {}
             for file_path in self.folder.rglob("*"):
-                if file_path.is_file() and file_path.suffix.casefold() in self.SUPPORTED_SUFFIXES: #.txt ve .md uzantıları kabul edilir
+                if file_path.is_file() and file_path.suffix.casefold() in self.SUPPORTED_SUFFIXES:
                     discovered[str(file_path.relative_to(self.folder))] = file_path
 
             added = changed = deleted = 0
@@ -337,12 +337,12 @@ class LibraryIndex:
                         "embedding_model, embedding_dim FROM documents"
                     )
                 }
-                for relative_path, file_path in discovered.items(): #daha önce indekslenmiş belgeleri getirir
+                for relative_path, file_path in discovered.items():
                     stat = file_path.stat()
                     previous = stored.get(relative_path)
                     content = file_path.read_text(encoding="utf-8", errors="replace")
                     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-                    if ( #içerik embedding modeli aynıysa yeniden embedding oluşturmaz, sadece değişiklikleri günceller
+                    if (
                         previous
                         and previous["sha256"] == digest
                         and previous["embedding_model"] == EMBEDDING_MODEL
@@ -389,23 +389,21 @@ class LibraryIndex:
                             time.time(),
                         ),
                     )
-                    with connection.cursor() as cursor:
-                        cursor.executemany(
-                            "INSERT INTO chunks("
-                            "path, chunk_index, content, embedding) "
-                            "VALUES (%s, %s, %s, %s)",
-                            [
-                                (
-                                    relative_path,
-                                    index,
-                                    chunk,
-                                    Vector(embedding),
-                                )
-                                for index, (chunk, embedding) in enumerate(
-                                    zip(chunks, embeddings)
-                                )
-                            ],
-                        )
+                    connection.executemany(
+                        "INSERT INTO chunks(path, chunk_index, content, embedding) "
+                        "VALUES (%s, %s, %s, %s)",
+                        [
+                            (
+                                relative_path,
+                                index,
+                                chunk,
+                                Vector(embedding),
+                            )
+                            for index, (chunk, embedding) in enumerate(
+                                zip(chunks, embeddings)
+                            )
+                        ],
+                    )
                     if previous:
                         changed += 1
                     else:
@@ -429,15 +427,15 @@ class LibraryIndex:
             if token not in LibraryIndex.STOP_WORDS
         ]
 
-    def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:  #pgvector cosine araması ile kelime puanını birleştirir
-       
+    def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """pgvector cosine araması ile kelime puanını birleştirir."""
         self.sync()
-        query_embedding = ollama_embeddings([query])[0] #kullanıcı sorusunun embeddingini alır
-        if len(query_embedding) != EMBEDDING_DIM: #boyut doğrular
+        query_embedding = ollama_embeddings([query])[0]
+        if len(query_embedding) != EMBEDDING_DIM:
             raise ValueError(
                 f"Sorgu embedding boyutu {EMBEDDING_DIM} olmalıdır."
             )
-        query_vector = Vector(query_embedding) #soruyu pgvectore dönüştürür
+        query_vector = Vector(query_embedding)
         query_tokens = self._tokens(query)
         candidate_limit = max(limit * 10, 50)
 
@@ -517,7 +515,7 @@ class LibraryIndex:
             "last_error": self.last_error,
         }
 
-    def watch(self) -> None: #2sn'de 1 self çağırıp klasörü kontrol ediyor
+    def watch(self) -> None:
         while not self._stop.is_set():
             try:
                 result = self.sync()
@@ -533,7 +531,7 @@ class LibraryIndex:
                 print(f"[Library Connector HATASI] {exc}")
             self._stop.wait(LIBRARY_SCAN_SECONDS)
 
-    def start(self) -> None: #watch işlemini arka planda bir thread olarak başlatır
+    def start(self) -> None:
         threading.Thread(target=self.watch, name="library-connector", daemon=True).start()
 
 
