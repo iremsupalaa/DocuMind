@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
@@ -16,27 +17,7 @@ import psycopg
 from pgvector import Vector
 from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
-from flask import (
-    Flask,
-    jsonify,
-    redirect,
-    render_template,
-    request,
-    url_for,
-)
-from flask_login import (
-    LoginManager,
-    current_user,
-    login_required,
-    login_user,
-    logout_user,
-)
-from flask_wtf.csrf import CSRFProtect
 
-from auth import (
-    authenticate_user,
-    get_user_by_id,
-)
 
 APP_DIR = Path(__file__).resolve().parent
 HOST = "127.0.0.1"
@@ -78,34 +59,6 @@ EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "768"))
 
 SEMANTIC_WEIGHT = 0.7
 KEYWORD_WEIGHT = 0.3
-
-SECRET_KEY = os.environ.get("SECRET_KEY")
-
-if not SECRET_KEY:
-    raise RuntimeError(
-        "SECRET_KEY tanımlanmamış. "
-        "Uygulamayı çalıştırmadan önce export SECRET_KEY=... kullanın."
-    )
-
-
-app = Flask(
-    __name__,
-    template_folder=str(APP_DIR / "templates"),
-    static_folder=str(APP_DIR / "static"),
-)
-
-app.config.update(
-    SECRET_KEY=SECRET_KEY,
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=False,
-)
-
-login_manager = LoginManager()
-login_manager.login_view = "login_page"
-login_manager.init_app(app)
-
-csrf = CSRFProtect(app)
 
 
 def clean_model_answer(answer: str) -> str:
