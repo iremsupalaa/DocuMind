@@ -5,18 +5,15 @@ import json
 import hashlib
 import os
 import re
+import sqlite3
 import threading
 import time
+import math 
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-
-import psycopg
-from pgvector import Vector
-from pgvector.psycopg import register_vector
-from psycopg.rows import dict_row
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -27,9 +24,9 @@ MCP_URL = os.environ.get("MCP_URL", "http://127.0.0.1:8000/mcp")
 LIBRARY_DIR = Path(os.environ.get(
     "LIBRARY_DIR", str(Path.home() / "Desktop" / "Library-Connector")
 )).expanduser()
-DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql:///ollama_library"
-)
+LIBRARY_DB = Path(os.environ.get(
+    "LIBRARY_DB", str(APP_DIR / "library.db")
+)).expanduser()
 LIBRARY_SCAN_SECONDS = float(os.environ.get("LIBRARY_SCAN_SECONDS", "2"))
 MAX_TOOL_ROUNDS = 2
 
@@ -55,7 +52,6 @@ EMBEDDING_MODEL = os.environ.get(
     "EMBEDDING_MODEL",
     "embeddinggemma"
 )
-EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "768"))
 
 SEMANTIC_WEIGHT = 0.7
 KEYWORD_WEIGHT = 0.3
@@ -194,7 +190,6 @@ def ollama_embeddings(metinler):
     payload = json.dumps({
         "model": EMBEDDING_MODEL,
         "input": metinler,
-        "dimensions": EMBEDDING_DIM,
         "keep_alive": "30m"
     }).encode("utf-8")
 
@@ -219,9 +214,33 @@ def ollama_embeddings(metinler):
 
     return embeddings
 
+def kosinus_benzerligi(a, b):
+    if not a or len(a) != len(b):
+        return 0.0
+
+    carpim = sum(
+        x * y
+        for x, y in zip(a, b)
+    )
+
+    a_uzunlugu = math.sqrt(
+        sum(x * x for x in a)
+    )
+
+    b_uzunlugu = math.sqrt(
+        sum(y * y for y in b)
+    )
+
+    if not a_uzunlugu or not b_uzunlugu:
+        return 0.0
+
+    return carpim / (
+        a_uzunlugu * b_uzunlugu
+    )
+
 
 class LibraryIndex:
-#Yerel metin dosyalarını PostgreSQL + pgvector ile sürekli eşitler
+    """Yerel metin dosyalarını SQLite ile sürekli eşitleyen küçük belge indeksi."""
 
     SUPPORTED_SUFFIXES = {".txt", ".md"}
     STOP_WORDS = {
@@ -231,70 +250,51 @@ class LibraryIndex:
         "onu", "şu", "ve", "veya",
     }
 
-    def __init__(self, folder: Path, database_url: str):
-        self.folder = folder #izlenecek klasörü saklar
-        self.database_url = database_url #bağlantı adresini saklar 
-        self._lock = threading.Lock() #aynı anda 2 eşitleme yapılmasını engeller
-        self._stop = threading.Event() #izleyiciyi durdurabilmek için event oluşturur
+    def __init__(self, folder: Path, database: Path):
+        self.folder = folder
+        self.database = database
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
         self.last_sync_at: Optional[float] = None
         self.last_error: Optional[str] = None
         self.folder.mkdir(parents=True, exist_ok=True)
+        self.database.parent.mkdir(parents=True, exist_ok=True)
         self._initialize_database()
 
-    def _connect(self) -> psycopg.Connection: #POSTEGRESQL BAĞLANTISI
-        connection = psycopg.connect(
-            self.database_url,
-            row_factory=dict_row,
-        )
-        register_vector(connection)
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self.database, timeout=30)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
-    def _initialize_database(self) -> None: #tablo oluşturmak için post. tablosunu açar.
-        with psycopg.connect(
-            self.database_url,
-            autocommit=True,
-            row_factory=dict_row,
-        ) as connection:
-            connection.execute("CREATE EXTENSION IF NOT EXISTS vector")
-            register_vector(connection)
-
-            connection.execute("""
+    def _initialize_database(self) -> None:
+        with self._connect() as connection:
+            connection.executescript("""
                 CREATE TABLE IF NOT EXISTS documents (
-                    path TEXT PRIMARY KEY, #dosya yolu
-                    mtime_ns BIGINT NOT NULL, #son değişiklik zamanı
-                    size BIGINT NOT NULL, #boyut
-                    sha256 TEXT NOT NULL, #hash
-                    embedding_model TEXT NOT NULL,
-                    embedding_dim INTEGER NOT NULL,
-                    updated_at DOUBLE PRECISION NOT NULL #son yedekleme
-                )
-            """)
-            connection.execute("""
-                ALTER TABLE documents
-                ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT ''
-            """)
-            connection.execute("""
-                ALTER TABLE documents
-                ADD COLUMN IF NOT EXISTS embedding_dim INTEGER NOT NULL DEFAULT 0
-            """)
-            connection.execute(f"""
+                    path TEXT PRIMARY KEY,
+                    mtime_ns INTEGER NOT NULL,
+                    size INTEGER NOT NULL,
+                    sha256 TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS chunks (
-                    id BIGSERIAL PRIMARY KEY,
+                    id INTEGER PRIMARY KEY,
                     path TEXT NOT NULL REFERENCES documents(path) ON DELETE CASCADE,
                     chunk_index INTEGER NOT NULL,
                     content TEXT NOT NULL,
-                    embedding vector({EMBEDDING_DIM}) NOT NULL,
+                    embedding TEXT NOT NULL,
                     UNIQUE(path, chunk_index)
-                )
+                );
+                CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);
+                PRAGMA optimize;
             """)
-            connection.execute("""
-                CREATE INDEX IF NOT EXISTS idx_chunks_path
-                ON chunks(path)
-            """)
-            connection.execute("""
-                CREATE INDEX IF NOT EXISTS idx_chunks_embedding_cosine
-                ON chunks USING hnsw (embedding vector_cosine_ops)
-            """)
+            chunk_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(chunks)")
+            }
+            if "embedding" not in chunk_columns:
+                connection.execute("ALTER TABLE chunks ADD COLUMN embedding TEXT")
+                connection.execute("DELETE FROM documents")
 
     @staticmethod
     def _chunks(text: str, target_size: int = 1200, overlap: int = 180) -> List[str]:
@@ -321,11 +321,11 @@ class LibraryIndex:
         return chunks
 
     def sync(self) -> Dict[str, int]:
-        #eklenen ya da değişen belgeleri indeksler, silinenleri veritabanından kaldırır.
+        """Eklenen/değişen belgeleri indeksler, silinenleri veritabanından kaldırır."""
         with self._lock:
             discovered: Dict[str, Path] = {}
             for file_path in self.folder.rglob("*"):
-                if file_path.is_file() and file_path.suffix.casefold() in self.SUPPORTED_SUFFIXES: #.txt ve .md uzantıları kabul edilir
+                if file_path.is_file() and file_path.suffix.casefold() in self.SUPPORTED_SUFFIXES:
                     discovered[str(file_path.relative_to(self.folder))] = file_path
 
             added = changed = deleted = 0
@@ -333,28 +333,21 @@ class LibraryIndex:
                 stored = {
                     row["path"]: row
                     for row in connection.execute(
-                        "SELECT path, mtime_ns, size, sha256, "
-                        "embedding_model, embedding_dim FROM documents"
+                        "SELECT path, mtime_ns, size, sha256 FROM documents"
                     )
                 }
-                for relative_path, file_path in discovered.items(): #daha önce indekslenmiş belgeleri getirir
+                for relative_path, file_path in discovered.items():
                     stat = file_path.stat()
                     previous = stored.get(relative_path)
                     content = file_path.read_text(encoding="utf-8", errors="replace")
                     digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-                    if ( #içerik embedding modeli aynıysa yeniden embedding oluşturmaz, sadece değişiklikleri günceller
-                        previous
-                        and previous["sha256"] == digest
-                        and previous["embedding_model"] == EMBEDDING_MODEL
-                        and previous["embedding_dim"] == EMBEDDING_DIM
-                    ):
+                    if previous and previous["sha256"] == digest:
                         if (
                             previous["mtime_ns"] != stat.st_mtime_ns
                             or previous["size"] != stat.st_size
                         ):
                             connection.execute(
-                                "UPDATE documents SET mtime_ns = %s, size = %s "
-                                "WHERE path = %s",
+                                "UPDATE documents SET mtime_ns = ?, size = ? WHERE path = ?",
                                 (stat.st_mtime_ns, stat.st_size, relative_path),
                             )
                         continue
@@ -365,57 +358,35 @@ class LibraryIndex:
                         raise ValueError(
                             "Parça ve embedding sayıları eşleşmedi."
                         )
-                    if any(len(embedding) != EMBEDDING_DIM for embedding in embeddings):
-                        raise ValueError(
-                            f"Embedding boyutu {EMBEDDING_DIM} olmalıdır."
-                        )
 
+                    connection.execute("DELETE FROM documents WHERE path = ?", (relative_path,))
                     connection.execute(
-                        "DELETE FROM documents WHERE path = %s",
-                        (relative_path,),
+                        "INSERT INTO documents(path, mtime_ns, size, sha256, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (relative_path, stat.st_mtime_ns, stat.st_size, digest, time.time()),
                     )
-                    connection.execute(
-                        "INSERT INTO documents("
-                        "path, mtime_ns, size, sha256, embedding_model, "
-                        "embedding_dim, updated_at) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                        (
-                            relative_path,
-                            stat.st_mtime_ns,
-                            stat.st_size,
-                            digest,
-                            EMBEDDING_MODEL,
-                            EMBEDDING_DIM,
-                            time.time(),
-                        ),
+                    connection.executemany(
+                        "INSERT INTO chunks(path, chunk_index, content, embedding) "
+                        "VALUES (?, ?, ?, ?)",
+                        [
+                            (
+                                relative_path,
+                                index,
+                                chunk,
+                                json.dumps(embedding),
+                            )
+                            for index, (chunk, embedding) in enumerate(
+                                zip(chunks, embeddings)
+                            )
+                        ],
                     )
-                    with connection.cursor() as cursor:
-                        cursor.executemany(
-                            "INSERT INTO chunks("
-                            "path, chunk_index, content, embedding) "
-                            "VALUES (%s, %s, %s, %s)",
-                            [
-                                (
-                                    relative_path,
-                                    index,
-                                    chunk,
-                                    Vector(embedding),
-                                )
-                                for index, (chunk, embedding) in enumerate(
-                                    zip(chunks, embeddings)
-                                )
-                            ],
-                        )
                     if previous:
                         changed += 1
                     else:
                         added += 1
 
                 for relative_path in set(stored) - set(discovered):
-                    connection.execute(
-                        "DELETE FROM documents WHERE path = %s",
-                        (relative_path,),
-                    )
+                    connection.execute("DELETE FROM documents WHERE path = ?", (relative_path,))
                     deleted += 1
 
             self.last_sync_at = time.time()
@@ -429,34 +400,15 @@ class LibraryIndex:
             if token not in LibraryIndex.STOP_WORDS
         ]
 
-    def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:  #pgvector cosine araması ile kelime puanını birleştirir
-       
+    def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """Semantik ve kelime puanlarını birleştirerek ilgili parçaları seçer."""
         self.sync()
-        query_embedding = ollama_embeddings([query])[0] #kullanıcı sorusunun embeddingini alır
-        if len(query_embedding) != EMBEDDING_DIM: #boyut doğrular
-            raise ValueError(
-                f"Sorgu embedding boyutu {EMBEDDING_DIM} olmalıdır."
-            )
-        query_vector = Vector(query_embedding) #soruyu pgvectore dönüştürür
+        query_embedding = ollama_embeddings([query])[0]
         query_tokens = self._tokens(query)
-        candidate_limit = max(limit * 10, 50)
 
         with self._lock, self._connect() as connection:
             rows = connection.execute(
-                """
-                SELECT
-                    path,
-                    chunk_index,
-                    content,
-                    GREATEST(
-                        0.0,
-                        1.0 - (embedding <=> %s)
-                    ) AS semantic_score
-                FROM chunks
-                ORDER BY embedding <=> %s
-                LIMIT %s
-                """,
-                (query_vector, query_vector, candidate_limit),
+                "SELECT path, chunk_index, content, embedding FROM chunks"
             ).fetchall()
 
         if not rows:
@@ -473,11 +425,18 @@ class LibraryIndex:
                 for token in query_tokens
             )
             highest_keyword_score = max(highest_keyword_score, keyword_raw)
+            semantic_score = max(
+                0.0,
+                kosinus_benzerligi(
+                    query_embedding,
+                    json.loads(row["embedding"]),
+                ),
+            )
             results.append({
                 "path": row["path"],
                 "chunk_index": row["chunk_index"],
                 "content": row["content"],
-                "semantic_score": float(row["semantic_score"]),
+                "semantic_score": semantic_score,
                 "keyword_raw": keyword_raw,
             })
 
@@ -500,24 +459,17 @@ class LibraryIndex:
 
     def status(self) -> Dict[str, Any]:
         with self._lock, self._connect() as connection:
-            documents = connection.execute(
-                "SELECT COUNT(*) AS count FROM documents"
-            ).fetchone()["count"]
-            chunks = connection.execute(
-                "SELECT COUNT(*) AS count FROM chunks"
-            ).fetchone()["count"]
+            documents = connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+            chunks = connection.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
         return {
             "folder": str(self.folder),
             "documents": documents,
             "chunks": chunks,
-            "database": "PostgreSQL + pgvector",
-            "embedding_model": EMBEDDING_MODEL,
-            "embedding_dim": EMBEDDING_DIM,
             "last_sync_at": self.last_sync_at,
             "last_error": self.last_error,
         }
 
-    def watch(self) -> None: #2sn'de 1 self çağırıp klasörü kontrol ediyor
+    def watch(self) -> None:
         while not self._stop.is_set():
             try:
                 result = self.sync()
@@ -533,11 +485,11 @@ class LibraryIndex:
                 print(f"[Library Connector HATASI] {exc}")
             self._stop.wait(LIBRARY_SCAN_SECONDS)
 
-    def start(self) -> None: #watch işlemini arka planda bir thread olarak başlatır
+    def start(self) -> None:
         threading.Thread(target=self.watch, name="library-connector", daemon=True).start()
 
 
-library_index = LibraryIndex(LIBRARY_DIR, DATABASE_URL)
+library_index = LibraryIndex(LIBRARY_DIR, LIBRARY_DB)
 
 
 class MCPClient:
@@ -1015,8 +967,6 @@ if __name__ == "__main__":
     print(f"Ollama: {OLLAMA_URL}")
     print(f"MCP: {MCP_URL}")
     print(f"Kütüphane: {LIBRARY_DIR}")
-    print("Veritabanı: PostgreSQL + pgvector")
-    print(f"Embedding: {EMBEDDING_MODEL} ({EMBEDDING_DIM} boyut)")
     print(
         "İlk eşitleme: "
         f"{first_sync['added']} eklendi, "
