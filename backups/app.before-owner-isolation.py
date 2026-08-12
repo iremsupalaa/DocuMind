@@ -292,8 +292,7 @@ class LibraryIndex:
         "onu", "şu", "ve", "veya",
     }
 
-    def __init__(self, owner_id: int, folder: Path, database_url: str):
-        self.owner_id = int(owner_id)
+    def __init__(self, folder: Path, database_url: str):
         self.folder = folder
         self.database_url = database_url
         self._lock = threading.Lock()
@@ -322,37 +321,36 @@ class LibraryIndex:
 
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS documents (
-                    id BIGSERIAL PRIMARY KEY,
-                    owner_id BIGINT NOT NULL
-                        REFERENCES users(id) ON DELETE CASCADE,
-                    path TEXT NOT NULL,
+                    path TEXT PRIMARY KEY,
                     mtime_ns BIGINT NOT NULL,
                     size BIGINT NOT NULL,
                     sha256 TEXT NOT NULL,
                     embedding_model TEXT NOT NULL,
                     embedding_dim INTEGER NOT NULL,
-                    updated_at DOUBLE PRECISION NOT NULL,
-                    UNIQUE(owner_id, path)
+                    updated_at DOUBLE PRECISION NOT NULL
                 )
+            """)
+            connection.execute("""
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS embedding_model TEXT NOT NULL DEFAULT ''
+            """)
+            connection.execute("""
+                ALTER TABLE documents
+                ADD COLUMN IF NOT EXISTS embedding_dim INTEGER NOT NULL DEFAULT 0
             """)
             connection.execute(f"""
                 CREATE TABLE IF NOT EXISTS chunks (
                     id BIGSERIAL PRIMARY KEY,
-                    document_id BIGINT NOT NULL
-                        REFERENCES documents(id) ON DELETE CASCADE,
+                    path TEXT NOT NULL REFERENCES documents(path) ON DELETE CASCADE,
                     chunk_index INTEGER NOT NULL,
                     content TEXT NOT NULL,
                     embedding vector({EMBEDDING_DIM}) NOT NULL,
-                    UNIQUE(document_id, chunk_index)
+                    UNIQUE(path, chunk_index)
                 )
             """)
             connection.execute("""
-                CREATE INDEX IF NOT EXISTS idx_documents_owner
-                ON documents(owner_id)
-            """)
-            connection.execute("""
-                CREATE INDEX IF NOT EXISTS idx_chunks_document
-                ON chunks(document_id)
+                CREATE INDEX IF NOT EXISTS idx_chunks_path
+                ON chunks(path)
             """)
             connection.execute("""
                 CREATE INDEX IF NOT EXISTS idx_chunks_embedding_cosine
@@ -384,7 +382,7 @@ class LibraryIndex:
         return chunks
 
     def sync(self) -> Dict[str, int]:
-        """Bu kullanıcıya ait eklenen/değişen belgeleri indeksler, silinenleri kaldırır."""
+        #eklenen değişen belgeleri indeksler, silinenleri veritabanından kaldırır
         with self._lock:
             discovered: Dict[str, Path] = {}
             for file_path in self.folder.rglob("*"):
@@ -396,10 +394,8 @@ class LibraryIndex:
                 stored = {
                     row["path"]: row
                     for row in connection.execute(
-                        "SELECT id, path, mtime_ns, size, sha256, "
-                        "embedding_model, embedding_dim FROM documents "
-                        "WHERE owner_id = %s",
-                        (self.owner_id,),
+                        "SELECT path, mtime_ns, size, sha256, "
+                        "embedding_model, embedding_dim FROM documents"
                     )
                 }
                 for relative_path, file_path in discovered.items():
@@ -419,13 +415,8 @@ class LibraryIndex:
                         ):
                             connection.execute(
                                 "UPDATE documents SET mtime_ns = %s, size = %s "
-                                "WHERE id = %s AND owner_id = %s",
-                                (
-                                    stat.st_mtime_ns,
-                                    stat.st_size,
-                                    previous["id"],
-                                    self.owner_id,
-                                ),
+                                "WHERE path = %s",
+                                (stat.st_mtime_ns, stat.st_size, relative_path),
                             )
                         continue
 
@@ -440,21 +431,16 @@ class LibraryIndex:
                             f"Embedding boyutu {EMBEDDING_DIM} olmalıdır."
                         )
 
-                    if previous:
-                        connection.execute(
-                            "DELETE FROM documents "
-                            "WHERE id = %s AND owner_id = %s",
-                            (previous["id"], self.owner_id),
-                        )
-
-                    document = connection.execute(
+                    connection.execute(
+                        "DELETE FROM documents WHERE path = %s",
+                        (relative_path,),
+                    )
+                    connection.execute(
                         "INSERT INTO documents("
-                        "owner_id, path, mtime_ns, size, sha256, embedding_model, "
+                        "path, mtime_ns, size, sha256, embedding_model, "
                         "embedding_dim, updated_at) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
-                        "RETURNING id",
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
                         (
-                            self.owner_id,
                             relative_path,
                             stat.st_mtime_ns,
                             stat.st_size,
@@ -463,27 +449,24 @@ class LibraryIndex:
                             EMBEDDING_DIM,
                             time.time(),
                         ),
-                    ).fetchone()
-                    document_id = document["id"]
-
-                    if chunks:
-                        with connection.cursor() as cursor:
-                            cursor.executemany(
-                                "INSERT INTO chunks("
-                                "document_id, chunk_index, content, embedding) "
-                                "VALUES (%s, %s, %s, %s)",
-                                [
-                                    (
-                                        document_id,
-                                        index,
-                                        chunk,
-                                        Vector(embedding),
-                                    )
-                                    for index, (chunk, embedding) in enumerate(
-                                        zip(chunks, embeddings)
-                                    )
-                                ],
-                            )
+                    )
+                    with connection.cursor() as cursor:
+                        cursor.executemany(
+                            "INSERT INTO chunks("
+                            "path, chunk_index, content, embedding) "
+                            "VALUES (%s, %s, %s, %s)",
+                            [
+                                (
+                                    relative_path,
+                                    index,
+                                    chunk,
+                                    Vector(embedding),
+                                )
+                                for index, (chunk, embedding) in enumerate(
+                                    zip(chunks, embeddings)
+                                )
+                            ],
+                        )
                     if previous:
                         changed += 1
                     else:
@@ -491,9 +474,8 @@ class LibraryIndex:
 
                 for relative_path in set(stored) - set(discovered):
                     connection.execute(
-                        "DELETE FROM documents "
-                        "WHERE id = %s AND owner_id = %s",
-                        (stored[relative_path]["id"], self.owner_id),
+                        "DELETE FROM documents WHERE path = %s",
+                        (relative_path,),
                     )
                     deleted += 1
 
@@ -524,25 +506,18 @@ class LibraryIndex:
             rows = connection.execute(
                 """
                 SELECT
-                    d.path,
-                    c.chunk_index,
-                    c.content,
+                    path,
+                    chunk_index,
+                    content,
                     GREATEST(
                         0.0,
-                        1.0 - (c.embedding <=> %s)
+                        1.0 - (embedding <=> %s)
                     ) AS semantic_score
-                FROM chunks AS c
-                JOIN documents AS d ON d.id = c.document_id
-                WHERE d.owner_id = %s
-                ORDER BY c.embedding <=> %s
+                FROM chunks
+                ORDER BY embedding <=> %s
                 LIMIT %s
                 """,
-                (
-                    query_vector,
-                    self.owner_id,
-                    query_vector,
-                    candidate_limit,
-                ),
+                (query_vector, query_vector, candidate_limit),
             ).fetchall()
 
         if not rows:
@@ -587,19 +562,12 @@ class LibraryIndex:
     def status(self) -> Dict[str, Any]:
         with self._lock, self._connect() as connection:
             documents = connection.execute(
-                "SELECT COUNT(*) AS count FROM documents "
-                "WHERE owner_id = %s",
-                (self.owner_id,),
+                "SELECT COUNT(*) AS count FROM documents"
             ).fetchone()["count"]
             chunks = connection.execute(
-                "SELECT COUNT(*) AS count "
-                "FROM chunks AS c "
-                "JOIN documents AS d ON d.id = c.document_id "
-                "WHERE d.owner_id = %s",
-                (self.owner_id,),
+                "SELECT COUNT(*) AS count FROM chunks"
             ).fetchone()["count"]
         return {
-            "owner_id": self.owner_id,
             "folder": str(self.folder),
             "documents": documents,
             "chunks": chunks,
@@ -616,48 +584,21 @@ class LibraryIndex:
                 result = self.sync()
                 if any(result.values()):
                     print(
-                        f"[Library Connector kullanıcı={self.owner_id}] "
+                        "[Library Connector] "
                         f"{result['added']} eklendi, "
                         f"{result['changed']} güncellendi, "
                         f"{result['deleted']} silindi"
                     )
             except Exception as exc:
                 self.last_error = str(exc)
-                print(
-                    f"[Library Connector HATASI kullanıcı={self.owner_id}] {exc}"
-                )
+                print(f"[Library Connector HATASI] {exc}")
             self._stop.wait(LIBRARY_SCAN_SECONDS)
 
-    def start(self) -> None:
-        threading.Thread(
-            target=self.watch,
-            name=f"library-connector-{self.owner_id}",
-            daemon=True,
-        ).start()
+    def start(self) -> None: #watch fonksiyonunu arkada bir thread olarak calıstırrı
+        threading.Thread(target=self.watch, name="library-connector", daemon=True).start()
 
 
-def load_library_indexes() -> Dict[str, LibraryIndex]:
-    """Aktif kullanıcıların her biri için yalnızca kendi klasörünü izleyen indeks oluşturur."""
-    with psycopg.connect(
-        DATABASE_URL,
-        row_factory=dict_row,
-    ) as connection:
-        users = connection.execute(
-            "SELECT id, folder_path FROM users "
-            "WHERE active = TRUE ORDER BY id"
-        ).fetchall()
-
-    return {
-        str(user["id"]): LibraryIndex(
-            owner_id=user["id"],
-            folder=Path(user["folder_path"]).expanduser(),
-            database_url=DATABASE_URL,
-        )
-        for user in users
-    }
-
-
-library_indexes = load_library_indexes()
+library_index = LibraryIndex(LIBRARY_DIR, DATABASE_URL)
 
 
 class MCPClient:
@@ -807,7 +748,6 @@ def run_agent(
     model: str,
     browser_messages: List[Dict[str, Any]],
     mode: str = "auto",
-    user_library: Optional[LibraryIndex] = None,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     events: List[Dict[str, Any]] = []
     user_query = next((
@@ -860,10 +800,7 @@ def run_agent(
         return answer or "Model bir yanıt üretemedi.", events
 
     if not is_thingsboard_request:
-        if user_library is None:
-            return "Bu kullanıcı için bir kütüphane tanımlanmamış.", events
-
-        library_hits = user_library.search(user_query)
+        library_hits = library_index.search(user_query)
         if library_hits:
             context = "\n\n".join(
                 f"[Kaynak: {hit['path']} | Parça: {hit['chunk_index'] + 1}]\n"
@@ -1120,21 +1057,14 @@ def chat_page():
 @app.get("/api/library/status")
 @login_required
 def library_status():
-    user_library = library_indexes.get(current_user.id)
-    if user_library is None:
-        return jsonify({
-            "error": "Bu kullanıcı için bir kütüphane tanımlanmamış."
-        }), 404
-
-    try:
-        sync_result = user_library.sync()
-        status = user_library.status()
-        status["sync"] = sync_result
-        return jsonify(status)
-    except Exception as exc:
-        return jsonify({
-            "error": f"Kullanıcı kütüphanesi eşitlenemedi: {exc}"
-        }), 500
+    # Kullanıcıya özel pgvector filtresi sonraki adımda eklenecek.
+    # Şimdilik ortak kütüphane sayıları gösterilmez.
+    return jsonify({
+        "documents": 0,
+        "chunks": 0,
+        "folder": current_user.folder_path,
+        "pending": True,
+    })
 
 
 @app.post("/api/chat")
@@ -1160,17 +1090,21 @@ def api_chat():
                 "error": "En az bir mesaj gerekli."
             }), 400
 
-        user_library = library_indexes.get(current_user.id)
-        if user_library is None:
+        # Kullanıcıya özel belge filtresi henüz eklenmedi.
+        # Ortak kütüphane sonuçlarının görünmesini engelliyoruz.
+        if mode in {"auto", "library"}:
             return jsonify({
-                "error": "Bu kullanıcı için bir kütüphane tanımlanmamış."
-            }), 404
+                "error": (
+                    "Kullanıcıya özel kütüphane filtresi henüz "
+                    "etkinleştirilmedi. Şimdilik Genel sohbet veya "
+                    "ThingsBoard modunu kullanın."
+                )
+            }), 503
 
         content, events = run_agent(
             model,
             messages,
             mode,
-            user_library=user_library,
         )
 
         return jsonify({
@@ -1208,10 +1142,8 @@ def api_chat():
 
 
 if __name__ == "__main__":
-    first_syncs: Dict[str, Dict[str, int]] = {}
-    for user_id, user_library in library_indexes.items():
-        first_syncs[user_id] = user_library.sync()
-        user_library.start()
+    first_sync = library_index.sync()
+    library_index.start()
 
     print(
         f"Ollama + Library Connector Sohbeti: "
@@ -1220,20 +1152,18 @@ if __name__ == "__main__":
     print(f"Giriş sayfası: http://{HOST}:{PORT}/login")
     print(f"Ollama: {OLLAMA_URL}")
     print(f"MCP: {MCP_URL}")
-    print(f"Kullanıcı kütüphanesi sayısı: {len(library_indexes)}")
+    print(f"Kütüphane: {LIBRARY_DIR}")
     print("Veritabanı: PostgreSQL + pgvector")
     print(
         f"Embedding: {EMBEDDING_MODEL} "
         f"({EMBEDDING_DIM} boyut)"
     )
-    for user_id, sync_result in first_syncs.items():
-        user_library = library_indexes[user_id]
-        print(
-            f"Kullanıcı {user_id} ({user_library.folder}) ilk eşitleme: "
-            f"{sync_result['added']} eklendi, "
-            f"{sync_result['changed']} güncellendi, "
-            f"{sync_result['deleted']} silindi"
-        )
+    print(
+        "İlk eşitleme: "
+        f"{first_sync['added']} eklendi, "
+        f"{first_sync['changed']} güncellendi, "
+        f"{first_sync['deleted']} silindi"
+    )
     print("Durdurmak için Ctrl+C")
 
     app.run(
