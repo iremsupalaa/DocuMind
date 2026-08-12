@@ -5,60 +5,333 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>Ollama · Akıllı Asistan</title>
+
   <style>
-    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #10120f; color: #f3f4ed; }
-    main { width: min(920px, calc(100% - 28px)); margin: 28px auto; }
-    header { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 18px; }
-    h1 { margin: 0; font-size: clamp(1.5rem, 4vw, 2.25rem); }
-    .sub { color: #a9b0a2; margin: 6px 0 0; }
-    label { display: grid; gap: 6px; color: #c9cec4; font-size: .85rem; }
-    input, textarea, button, select { font: inherit; }
-    input, textarea, select { color: #f6f7f2; background: #191c18; border: 1px solid #343a31; border-radius: 12px; padding: 12px; }
-    #model { width: 170px; }
-    .controls { display: flex; gap: 10px; align-items: end; }
-    #mode { min-width: 150px; }
-    #messages { min-height: 52vh; max-height: 62vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 18px; background: #151714; border: 1px solid #292e27; border-radius: 18px; }
-    .message { max-width: 86%; padding: 12px 14px; border-radius: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
-    .user { align-self: flex-end; background: #d9ff63; color: #172000; border-bottom-right-radius: 4px; }
-    .assistant { align-self: flex-start; background: #252a23; border-bottom-left-radius: 4px; }
-    .trace { align-self: flex-start; width: min(94%, 760px); border: 1px solid #3b4435; border-radius: 14px; background: #1b1f19; overflow: hidden; }
-    .trace.error { border-color: #78483b; }
-    .trace summary { cursor: pointer; padding: 11px 13px; color: #d9ff63; font-size: .88rem; font-weight: 700; }
-    .trace.error summary { color: #ffab91; }
-    .trace pre { margin: 0; padding: 0 13px 13px; color: #c9cec4; white-space: pre-wrap; overflow-wrap: anywhere; font: .79rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .sources { align-self: flex-start; display: grid; gap: 8px; width: min(94%, 760px); }
-    .source-card { background: #1b1f19; border: 1px solid #3b4435; border-radius: 12px; overflow: hidden; }
-    .source-card summary { cursor: pointer; padding: 11px 13px; color: #d9ff63; font-weight: 700; }
-    .source-card summary:hover { background: #242922; }
-    .source-info { padding: 0 13px 8px; color: #8f9988; font-size: .78rem; }
-    .source-card pre { margin: 0; padding: 0 13px 13px; color: #c9cec4; white-space: pre-wrap; overflow-wrap: anywhere; font: .79rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .badges { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 7px; }
-    .badge { display: inline-flex; align-items: center; gap: 6px; color: #8f9988; font-size: .78rem; }
-    .dot { width: 7px; height: 7px; border-radius: 50%; background: #d9ff63; box-shadow: 0 0 10px #d9ff6388; }
-    .empty { color: #7f8878; margin: auto; text-align: center; }
-    form { display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 12px; align-items: end; }
-    textarea { resize: vertical; min-height: 58px; max-height: 180px; }
-    button { border: 0; border-radius: 12px; padding: 14px 20px; background: #d9ff63; color: #172000; font-weight: 750; cursor: pointer; }
-    button:disabled { opacity: .55; cursor: wait; }
-    #status { min-height: 22px; margin: 8px 4px; color: #ffab91; font-size: .9rem; }
-    @media (max-width: 680px) { header { align-items: stretch; flex-direction: column; } .controls { align-items: stretch; flex-direction: column; } #model, #mode { width: 100%; } form { grid-template-columns: 1fr; } }
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #10120f;
+      color: #f3f4ed;
+    }
+
+    main {
+      width: min(920px, calc(100% - 28px));
+      margin: 28px auto;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.5rem, 4vw, 2.25rem);
+    }
+
+    .sub {
+      color: #a9b0a2;
+      margin: 6px 0 0;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: #c9cec4;
+      font-size: .85rem;
+    }
+
+    input,
+    textarea,
+    button,
+    select {
+      font: inherit;
+    }
+
+    input,
+    textarea,
+    select {
+      color: #f6f7f2;
+      background: #191c18;
+      border: 1px solid #343a31;
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    #model {
+      width: 170px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      align-items: end;
+    }
+
+    #mode {
+      min-width: 150px;
+    }
+
+    #messages {
+      min-height: 52vh;
+      max-height: 62vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 18px;
+      background: #151714;
+      border: 1px solid #292e27;
+      border-radius: 18px;
+    }
+
+    .message {
+      max-width: 86%;
+      padding: 12px 14px;
+      border-radius: 15px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .user {
+      align-self: flex-end;
+      background: #d9ff63;
+      color: #172000;
+      border-bottom-right-radius: 4px;
+    }
+
+    .assistant {
+      align-self: flex-start;
+      background: #252a23;
+      border-bottom-left-radius: 4px;
+    }
+
+    .trace {
+      align-self: flex-start;
+      width: min(94%, 760px);
+      border: 1px solid #3b4435;
+      border-radius: 14px;
+      background: #1b1f19;
+      overflow: hidden;
+    }
+
+    .trace.error {
+      border-color: #78483b;
+    }
+
+    .trace summary {
+      cursor: pointer;
+      padding: 11px 13px;
+      color: #d9ff63;
+      font-size: .88rem;
+      font-weight: 700;
+    }
+
+    .trace.error summary {
+      color: #ffab91;
+    }
+
+    .trace pre {
+      margin: 0;
+      padding: 0 13px 13px;
+      color: #c9cec4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: .79rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .sources {
+      align-self: flex-start;
+      display: grid;
+      gap: 8px;
+      width: min(94%, 760px);
+    }
+
+    .source-card {
+      background: #1b1f19;
+      border: 1px solid #3b4435;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .source-card summary {
+      cursor: pointer;
+      padding: 11px 13px;
+      color: #d9ff63;
+      font-weight: 700;
+    }
+
+    .source-card summary:hover {
+      background: #242922;
+    }
+
+    .source-info {
+      padding: 0 13px 8px;
+      color: #8f9988;
+      font-size: .78rem;
+    }
+
+    .source-card pre {
+      margin: 0;
+      padding: 0 13px 13px;
+      color: #c9cec4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: .79rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      margin-top: 7px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #8f9988;
+      font-size: .78rem;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #d9ff63;
+      box-shadow: 0 0 10px #d9ff6388;
+    }
+
+    .empty {
+      color: #7f8878;
+      margin: auto;
+      text-align: center;
+    }
+
+    #chat-form {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      margin-top: 12px;
+      align-items: end;
+    }
+
+    .user-menu {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #c9cec4;
+    }
+
+    .logout-form {
+      margin: 0;
+    }
+
+    .logout-button {
+      padding: 10px 12px;
+      background: #252a23;
+      color: #f3f4ed;
+      border: 1px solid #343a31;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 58px;
+      max-height: 180px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 14px 20px;
+      background: #d9ff63;
+      color: #172000;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .55;
+      cursor: wait;
+    }
+
+    #status {
+      min-height: 22px;
+      margin: 8px 4px;
+      color: #ffab91;
+      font-size: .9rem;
+    }
+
+    @media (max-width: 680px) {
+      header {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .controls {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      #model,
+      #mode {
+        width: 100%;
+      }
+
+      #chat-form {
+        grid-template-columns: 1fr;
+      }
+
+      .user-menu {
+        justify-content: space-between;
+      }
+    }
   </style>
 </head>
+
 <body>
   <main>
     <header>
       <div>
         <h1 id="app-title">Ollama · Akıllı Asistan</h1>
-        <p class="sub" id="app-subtitle">Sorunuzu otomatik olarak kütüphane, genel sohbet veya ThingsBoard'a yönlendirir.</p>
+
+        <p class="sub" id="app-subtitle">
+          Sorunuzu otomatik olarak kütüphane, genel sohbet veya
+          ThingsBoard'a yönlendirir.
+        </p>
+
         <div class="badges">
-          <span class="badge"><span class="dot"></span><span id="mode-badge">Yerel Ollama + Library Connector + MCP</span></span>
-          <span class="badge" id="library-status"><span class="dot"></span><span>Library Connector kontrol ediliyor…</span></span>
+          <span class="badge">
+            <span class="dot"></span>
+            <span id="mode-badge">
+              Yerel Ollama + Library Connector + MCP
+            </span>
+          </span>
+
+          <span class="badge" id="library-status">
+            <span class="dot"></span>
+            <span>Library Connector kontrol ediliyor…</span>
+          </span>
         </div>
       </div>
+
       <div class="controls">
-        <label>Çalışma modu
+        <label>
+          Çalışma modu
+
           <select id="mode">
             <option value="auto">Otomatik</option>
             <option value="library">Kütüphane</option>
@@ -66,21 +339,70 @@
             <option value="thingsboard">ThingsBoard</option>
           </select>
         </label>
-        <label>Model <input id="model" value="gemma3:4b" autocomplete="off"></label>
+
+        <label>
+          Model
+
+          <input
+            id="model"
+            value="gemma3:4b"
+            autocomplete="off"
+          >
+        </label>
+
+        <div class="user-menu">
+          <span>{{ current_user.display_name }}</span>
+
+          <form
+            class="logout-form"
+            method="post"
+            action="{{ url_for('logout') }}"
+          >
+            <input
+              type="hidden"
+              name="csrf_token"
+              value="{{ csrf_token() }}"
+            >
+
+            <button
+              class="logout-button"
+              type="submit"
+            >
+              Çıkış
+            </button>
+          </form>
+        </div>
       </div>
     </header>
-    <section id="messages" aria-live="polite"><p class="empty">Bir soru yazarak sohbete başlayın.</p></section>
+
+    <section id="messages" aria-live="polite">
+      <p class="empty">
+        Bir soru yazarak sohbete başlayın.
+      </p>
+    </section>
+
     <div id="status" role="status"></div>
+
     <form id="chat-form">
-      <textarea id="prompt" placeholder="Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?" required></textarea>
-      <button id="send" type="submit">Gönder</button>
+      <textarea
+        id="prompt"
+        placeholder="Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?"
+        required
+      ></textarea>
+
+      <button id="send" type="submit">
+        Gönder
+      </button>
     </form>
   </main>
+
   <script>
     const history = [];
+
     const csrfToken = document
-  .querySelector('meta[name="csrf-token"]')
-  .getAttribute('content');
+      .querySelector('meta[name="csrf-token"]')
+      .getAttribute('content');
+
     const form = document.querySelector('#chat-form');
     const promptInput = document.querySelector('#prompt');
     const modelInput = document.querySelector('#model');
@@ -96,34 +418,46 @@
     const modeConfig = {
       auto: {
         title: 'Ollama · Akıllı Asistan',
-        subtitle: "Sorunuzu otomatik olarak kütüphane, genel sohbet veya ThingsBoard'a yönlendirir.",
+        subtitle:
+          "Sorunuzu otomatik olarak kütüphane, genel sohbet veya ThingsBoard'a yönlendirir.",
         badge: 'Yerel Ollama + Library Connector + MCP',
-        placeholder: 'Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?',
+        placeholder:
+          'Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?',
         empty: 'Otomatik yönlendirme için bir soru yazın.',
         showLibraryStatus: true
       },
+
       library: {
         title: 'Ollama · Library Connector',
-        subtitle: 'Yalnızca masaüstü kütüphanenizdeki güncel belgelere göre yanıt verir.',
+        subtitle:
+          'Yalnızca masaüstü kütüphanenizdeki güncel belgelere göre yanıt verir.',
         badge: 'Yerel Ollama + Library Connector',
-        placeholder: 'Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?',
+        placeholder:
+          'Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?',
         empty: 'Kütüphane belgeleriniz hakkında bir soru yazın.',
         showLibraryStatus: true
       },
+
       general: {
         title: 'Ollama · Genel Sohbet',
-        subtitle: 'Kütüphane ve ThingsBoard kullanılmadan yerel modelle sohbet edin.',
+        subtitle:
+          'Kütüphane ve ThingsBoard kullanılmadan yerel modelle sohbet edin.',
         badge: 'Yalnızca yerel Ollama',
-        placeholder: 'Örneğin: Bana üç günlük bir çalışma planı hazırla.',
+        placeholder:
+          'Örneğin: Bana üç günlük bir çalışma planı hazırla.',
         empty: 'Genel sohbet için bir mesaj yazın.',
         showLibraryStatus: false
       },
+
       thingsboard: {
         title: 'Ollama · ThingsBoard MCP',
-        subtitle: 'Yalnızca ThingsBoard cihazlarını ve telemetri verilerini MCP araçlarıyla sorgular.',
+        subtitle:
+          'Yalnızca ThingsBoard cihazlarını ve telemetri verilerini MCP araçlarıyla sorgular.',
         badge: 'Yerel Ollama + ThingsBoard MCP',
-        placeholder: 'Örneğin: ThingsBoard cihazlarını listele.',
-        empty: 'ThingsBoard cihazları veya ölçümleri hakkında bir soru yazın.',
+        placeholder:
+          'Örneğin: ThingsBoard cihazlarını listele.',
+        empty:
+          'ThingsBoard cihazları veya ölçümleri hakkında bir soru yazın.',
         showLibraryStatus: false
       }
     };
@@ -131,52 +465,80 @@
     function resetConversation(emptyText) {
       history.length = 0;
       messages.replaceChildren();
+
       const empty = document.createElement('p');
       empty.className = 'empty';
       empty.textContent = emptyText;
+
       messages.appendChild(empty);
       status.textContent = '';
       promptInput.value = '';
     }
 
     function applyModeUI({ reset = false } = {}) {
-      const config = modeConfig[modeInput.value] || modeConfig.auto;
+      const config =
+        modeConfig[modeInput.value] || modeConfig.auto;
+
       appTitle.textContent = config.title;
       appSubtitle.textContent = config.subtitle;
       modeBadge.textContent = config.badge;
       promptInput.placeholder = config.placeholder;
       libraryStatus.hidden = !config.showLibraryStatus;
       document.title = config.title;
-      if (reset) resetConversation(config.empty);
+
+      if (reset) {
+        resetConversation(config.empty);
+      }
     }
 
     function addMessage(role, content) {
       messages.querySelector('.empty')?.remove();
+
       const item = document.createElement('div');
       item.className = `message ${role}`;
       item.textContent = content;
+
       messages.appendChild(item);
       messages.scrollTop = messages.scrollHeight;
+
       return item;
     }
 
     function percent(value) {
       const number = Number(value);
-      return Number.isFinite(number) ? `%${Math.round(number * 100)}` : null;
+
+      return Number.isFinite(number)
+        ? `%${Math.round(number * 100)}`
+        : null;
     }
 
     function addSources(sources = []) {
-      if (!Array.isArray(sources) || !sources.length) return;
+      if (!Array.isArray(sources) || !sources.length) {
+        return;
+      }
+
       const container = document.createElement('div');
       container.className = 'sources';
+
       for (const rawSource of sources) {
-        const source = typeof rawSource === 'string' ? { path: rawSource } : (rawSource || {});
+        const source =
+          typeof rawSource === 'string'
+            ? { path: rawSource }
+            : (rawSource || {});
+
         const details = document.createElement('details');
         details.className = 'source-card';
+
         const summary = document.createElement('summary');
         const chunkIndex = Number(source.chunk_index);
-        const chunkLabel = Number.isInteger(chunkIndex) ? ` · Parça ${chunkIndex + 1}` : '';
-        summary.textContent = `${source.path || 'Kütüphane belgesi'}${chunkLabel}`;
+
+        const chunkLabel = Number.isInteger(chunkIndex)
+          ? ` · Parça ${chunkIndex + 1}`
+          : '';
+
+        summary.textContent =
+          `${source.path || 'Kütüphane belgesi'}${chunkLabel}`;
+
         details.appendChild(summary);
 
         const scores = [
@@ -184,19 +546,26 @@
           ['Semantik', percent(source.semantic_score)],
           ['Kelime', percent(source.keyword_score)]
         ].filter(([, value]) => value);
+
         if (scores.length) {
           const info = document.createElement('div');
           info.className = 'source-info';
-          info.textContent = scores.map(([label, value]) => `${label} ${value}`).join(' · ');
+          info.textContent = scores
+            .map(([label, value]) => `${label} ${value}`)
+            .join(' · ');
+
           details.appendChild(info);
         }
+
         if (source.content) {
           const content = document.createElement('pre');
           content.textContent = source.content;
           details.appendChild(content);
         }
+
         container.appendChild(details);
       }
+
       messages.appendChild(container);
       messages.scrollTop = messages.scrollHeight;
     }
@@ -207,22 +576,36 @@
           addSources(event.result?.sources || []);
           continue;
         }
+
         const details = document.createElement('details');
-        details.className = `trace ${event.ok === false ? 'error' : ''}`;
+        details.className =
+          `trace ${event.ok === false ? 'error' : ''}`;
+
         details.open = event.type === 'tool_call';
+
         const summary = document.createElement('summary');
-        summary.textContent = event.type === 'tool_call'
-          ? `MCP aracı çağrıldı · ${event.tool}`
-          : `${event.ok ? 'MCP sonucu başarılı' : 'MCP sonucu hatalı'} · ${event.tool}`;
+
+        summary.textContent =
+          event.type === 'tool_call'
+            ? `MCP aracı çağrıldı · ${event.tool}`
+            : `${event.ok
+                ? 'MCP sonucu başarılı'
+                : 'MCP sonucu hatalı'} · ${event.tool}`;
+
         const body = document.createElement('pre');
+
         body.textContent = JSON.stringify(
-          event.type === 'tool_call' ? event.arguments : event.result,
+          event.type === 'tool_call'
+            ? event.arguments
+            : event.result,
           null,
           2
         );
+
         details.append(summary, body);
         messages.appendChild(details);
       }
+
       messages.scrollTop = messages.scrollHeight;
     }
 
@@ -233,10 +616,20 @@
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
+
       const content = promptInput.value.trim();
-      if (!content) return;
-      history.push({ role: 'user', content });
+
+      if (!content) {
+        return;
+      }
+
+      history.push({
+        role: 'user',
+        content
+      });
+
       addMessage('user', content);
+
       promptInput.value = '';
       status.textContent = 'Model düşünüyor…';
       send.disabled = true;
@@ -245,18 +638,34 @@
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' ,
-          'X-CSRFToken': csrfToken},
+
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+          },
+
           body: JSON.stringify({
             model: modelInput.value.trim(),
             mode: modeInput.value,
             messages: history
           })
         });
+
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'İstek başarısız oldu.');
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || 'İstek başarısız oldu.'
+          );
+        }
+
         addToolEvents(data.events);
-        history.push({ role: 'assistant', content: data.content });
+
+        history.push({
+          role: 'assistant',
+          content: data.content
+        });
+
         addMessage('assistant', data.content);
         status.textContent = '';
       } catch (error) {
@@ -278,20 +687,44 @@
 
     async function refreshLibraryStatus() {
       try {
-        const response = await fetch('/api/library/status');
+        const response =
+          await fetch('/api/library/status');
+
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Kütüphane durumu alınamadı.');
-        libraryStatus.lastElementChild.textContent = `Library Connector · ${data.documents} belge, ${data.chunks} parça`;
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || 'Kütüphane durumu alınamadı.'
+          );
+        }
+
+        if (data.pending) {
+          libraryStatus.lastElementChild.textContent =
+            'Kullanıcıya özel kütüphane hazırlanıyor…';
+
+          libraryStatus.title = data.folder;
+          return;
+        }
+
+        libraryStatus.lastElementChild.textContent =
+          `Library Connector · ${data.documents} belge, ${data.chunks} parça`;
+
         libraryStatus.title = data.folder;
       } catch (error) {
-        libraryStatus.lastElementChild.textContent = 'Library Connector bağlantı hatası';
+        libraryStatus.lastElementChild.textContent =
+          'Library Connector bağlantı hatası';
+
         libraryStatus.title = error.message;
       }
     }
 
     applyModeUI();
     refreshLibraryStatus();
-    setInterval(refreshLibraryStatus, 5000);
+
+    setInterval(
+      refreshLibraryStatus,
+      5000
+    );
   </script>
 </body>
 </html>
