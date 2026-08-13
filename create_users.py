@@ -44,6 +44,7 @@ def create_users_table(connection):
             password_hash TEXT NOT NULL,
             folder_path TEXT UNIQUE NOT NULL,
             active BOOLEAN NOT NULL DEFAULT TRUE,
+            role TEXT NOT NULL DEFAULT 'user',
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """

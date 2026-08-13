@@ -643,14 +643,9 @@ def load_library_indexes() -> Dict[str, LibraryIndex]:
         row_factory=dict_row,
     ) as connection:
         users = connection.execute(
-            """
-            SELECT id, folder_path
-            FROM users
-            WHERE active = TRUE
-              AND role = 'user'
-            ORDER BY id
-            """
-        ).fetchall()  # Yönetici rolü için ayrı bir indeks oluşturulmaz.
+            "SELECT id, folder_path FROM users "
+            "WHERE active = TRUE ORDER BY id"
+        ).fetchall()
 
     return {
         str(user["id"]): LibraryIndex(
@@ -664,80 +659,6 @@ def load_library_indexes() -> Dict[str, LibraryIndex]:
 
 library_indexes = load_library_indexes()
 
-def get_library_members() -> Dict[str, str]: #kütüphanesi bulunan aktif kullanıcıları döndürür
-
-    with psycopg.connect(
-        DATABASE_URL,
-        row_factory=dict_row,
-    ) as connection:
-        rows = connection.execute(
-            """
-            SELECT id, display_name
-            FROM users
-            WHERE active = TRUE
-              AND role = 'user'
-            ORDER BY id
-            """
-        ).fetchall()
-
-    return {
-        str(row["id"]): row["display_name"]
-        for row in rows
-    }
-
-def resolve_library_access(
-    user,
-    requested_scope: str,
-) -> List[Tuple[str, str, LibraryIndex]]:
-
-    # Giriş yapan kullanıcının erişebileceği kütüphaneleri belirler.
-
-    members = get_library_members()
-
-    # Normal kullanıcılar tarayıcıdan hangi kapsamı gönderirse göndersin sadece kendi kütüphanesini kullanabilir.
-    if not user.is_admin: 
-        user_library = library_indexes.get(user.id)
-
-        if user_library is None:
-            raise ValueError(
-                "Bu kullanıcı için bir kütüphane tanımlanmamış."
-            )
-
-        return [
-            (
-                user.id,
-                user.display_name,
-                user_library,
-            )
-        ]
-
-    # Yönetici "Tümü" seçtiğinde bütün kullanıcı indeksleri döner.
-    if requested_scope in {"", "self", "all"}:
-        selected_ids = list(members.keys())
-    else:
-        # Yönetici belirli bir kullanıcı seçti.
-        if requested_scope not in members:
-            raise ValueError(
-                "Geçersiz kütüphane kapsamı."
-            )
-
-        selected_ids = [requested_scope]
-
-    selected_libraries = []
-
-    for user_id in selected_ids:
-        library_index = library_indexes.get(user_id)
-
-        if library_index is not None:
-            selected_libraries.append(
-                (
-                    user_id,
-                    members[user_id],
-                    library_index,
-                )
-            )
-
-    return selected_libraries
 
 class MCPClient:
     """Streamable HTTP kullanan küçük, bağımlılıksız MCP istemcisi."""
@@ -882,48 +803,11 @@ def mcp_tools_for_ollama(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     } for tool in tools]
 
 
-def search_libraries( #yönetici tümü seçtiğinde hem Ada hem Bob indexinde arama yapılır
-    query: str,
-    selected_libraries: List[
-        Tuple[str, str, LibraryIndex]
-    ],
-    limit: int = 5,
-) -> List[Dict[str, Any]]:
-    """Seçilen kütüphanelerde arama yapıp sonuçları birleştirir."""
-
-    combined_results: List[Dict[str, Any]] = []
-
-    for owner_id, owner_name, library_index in selected_libraries:
-        hits = library_index.search(
-            query,
-            limit=limit,
-        )
-
-        for hit in hits:
-            combined_results.append({
-                **hit,
-                "owner_id": owner_id,
-                "owner_name": owner_name,
-            })
-
-    combined_results.sort(
-        key=lambda item: (
-            -item["score"],
-            item["owner_name"],
-            item["path"],
-            item["chunk_index"],
-        )
-    )
-
-    return combined_results[:limit]
-
 def run_agent(
     model: str,
     browser_messages: List[Dict[str, Any]],
     mode: str = "auto",
-    user_libraries: Optional[
-        List[Tuple[str, str, LibraryIndex]]
-    ] = None,
+    user_library: Optional[LibraryIndex] = None,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     events: List[Dict[str, Any]] = []
     user_query = next((
@@ -976,19 +860,13 @@ def run_agent(
         return answer or "Model bir yanıt üretemedi.", events
 
     if not is_thingsboard_request:
-        if not user_libraries:
-          return (
-        "Bu kullanıcı için erişilebilir bir kütüphane bulunmuyor.",
-        events,
-    )
+        if user_library is None:
+            return "Bu kullanıcı için bir kütüphane tanımlanmamış.", events
 
-        library_hits = search_libraries(
-        user_query,
-        user_libraries,
-)
+        library_hits = user_library.search(user_query)
         if library_hits:
             context = "\n\n".join(
-                f"[Sahip: {hit['owner_name']} | "f"Kaynak: {hit['path']} | "f"Parça: {hit['chunk_index'] + 1}]\n"
+                f"[Kaynak: {hit['path']} | Parça: {hit['chunk_index'] + 1}]\n"
                 f"{hit['content']}"
                 for hit in library_hits
             )[:10000]
@@ -1005,8 +883,6 @@ def run_agent(
                             "semantic_score": round(hit["semantic_score"], 4),
                             "keyword_score": round(hit["keyword_score"], 4),
                             "content": hit["content"],
-                            "owner_id": hit["owner_id"],
-                            "owner_name": hit["owner_name"],
                         }
                         for hit in library_hits
                     ],
@@ -1235,75 +1111,29 @@ def logout():
 @app.get("/")
 @login_required
 def chat_page():
-    members = get_library_members()
-
-    library_scopes = [
-        {
-            "id": user_id,
-            "display_name": display_name,
-        }
-        for user_id, display_name in members.items()
-    ]
-
     return render_template(
         "chat.html",
         current_user=current_user,
-        library_scopes=library_scopes,
     )
 
 
 @app.get("/api/library/status")
 @login_required
 def library_status():
+    user_library = library_indexes.get(current_user.id)
+    if user_library is None:
+        return jsonify({
+            "error": "Bu kullanıcı için bir kütüphane tanımlanmamış."
+        }), 404
+
     try:
-        requested_scope = request.args.get(
-            "scope",
-            "self",
-        )
-
-        selected_libraries = resolve_library_access(
-            current_user,
-            requested_scope,
-        )
-
-        document_count = 0
-        chunk_count = 0
-        library_details = []
-
-        for owner_id, owner_name, library_index in selected_libraries:
-            sync_result = library_index.sync()
-            status = library_index.status()
-
-            document_count += status["documents"]
-            chunk_count += status["chunks"]
-
-            library_details.append({
-                "owner_id": owner_id,
-                "owner_name": owner_name,
-                "folder": status["folder"],
-                "documents": status["documents"],
-                "chunks": status["chunks"],
-                "sync": sync_result,
-            })
-
-        return jsonify({
-            "documents": document_count,
-            "chunks": chunk_count,
-            "scope": requested_scope,
-            "libraries": library_details,
-        })
-
-    except ValueError as exc:
-        return jsonify({
-            "error": str(exc)
-        }), 400
-
+        sync_result = user_library.sync()
+        status = user_library.status()
+        status["sync"] = sync_result
+        return jsonify(status)
     except Exception as exc:
         return jsonify({
-            "error": (
-                "Kütüphane durumu alınamadı: "
-                f"{exc}"
-            )
+            "error": f"Kullanıcı kütüphanesi eşitlenemedi: {exc}"
         }), 500
 
 
@@ -1316,7 +1146,6 @@ def api_chat():
         model = body.get("model", "gemma3:4b")
         mode = body.get("mode", "auto")
         messages = body.get("messages", [])
-        requested_scope = str( body.get("library_scope", "self"))
 
         if mode not in {
             "auto",
@@ -1331,16 +1160,17 @@ def api_chat():
                 "error": "En az bir mesaj gerekli."
             }), 400
 
-        selected_libraries = resolve_library_access(
-            current_user,
-            requested_scope,
-)
+        user_library = library_indexes.get(current_user.id)
+        if user_library is None:
+            return jsonify({
+                "error": "Bu kullanıcı için bir kütüphane tanımlanmamış."
+            }), 404
 
         content, events = run_agent(
             model,
             messages,
             mode,
-            user_libraries=selected_libraries,
+            user_library=user_library,
         )
 
         return jsonify({

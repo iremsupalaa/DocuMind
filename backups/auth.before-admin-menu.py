@@ -43,7 +43,6 @@ class User(UserMixin):
         password_hash: str,
         folder_path: str,
         active: bool,
-        role: str,
     ):
         self.id = str(user_id)
         self.username = username
@@ -51,15 +50,10 @@ class User(UserMixin):
         self.password_hash = password_hash
         self.folder_path = folder_path
         self.active = active
-        self.role = role
 
     @property
     def is_active(self) -> bool:
-        return bool(self.active)
-
-    @property
-    def is_admin(self) -> bool:
-        return self.role == "admin"
+        return self.active
 
 
 def row_to_user(row) -> Optional[User]:
@@ -75,7 +69,6 @@ def row_to_user(row) -> Optional[User]:
         password_hash=row["password_hash"],
         folder_path=row["folder_path"],
         active=row["active"],
-        role = row["role"],
     )
 
 
@@ -99,8 +92,7 @@ def get_user_by_id(user_id: str) -> Optional[User]:
                 display_name,
                 password_hash,
                 folder_path,
-                active,
-                role
+                active
             FROM users
             WHERE id = %s
             """,
@@ -130,8 +122,7 @@ def get_user_by_username(username: str) -> Optional[User]:
                 display_name,
                 password_hash,
                 folder_path,
-                active,
-                role
+                active
             FROM users
             WHERE username = %s
             """,
