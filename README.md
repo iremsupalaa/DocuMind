@@ -1,6 +1,8 @@
 
-<img width="585" height="594" alt="Screenshot 2026-08-13 at 09 43 09" src="https://github.com/user-attachments/assets/9a1a2066-0023-4333-b46a-30954300ca7f" />
-<img width="968" height="896" alt="Screenshot 2026-08-10 at 10 03 50" src="https://github.com/user-attachments/assets/0103cb4d-052c-4a1f-a444-23a0ee96c421" />
+<img width="1057" height="1072" alt="Screenshot 2026-08-13 at 14 34 24" src="https://github.com/user-attachments/assets/0dc21cd6-3cfe-4e90-b7dc-8edf5ab65077" />
+
+<img width="1246" height="1078" alt="Screenshot 2026-08-13 at 14 34 52" src="https://github.com/user-attachments/assets/b4b0cacc-ad6e-4339-82b6-b5e96b6b9836" />
+
 # Ollama ile Yerel Yapay Zekâ Uygulaması
 
 Bu proje, tarayıcıdan prompt gönderip bilgisayarınızda çalışan Ollama modelinden cevap alabileceğiniz küçük bir sohbet uygulamasıdır. Ayrıca ThingsBoard MCP sunucusundaki araçları otomatik keşfeder; araç çağrılarını, parametreleri, sonuçları ve modelin Türkçe değerlendirmesini web arayüzünde gösterir. Python dışında ek bir paket gerektirmez.
