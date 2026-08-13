@@ -4,12 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token() }}">
-  <title>Ollama · Akıllı Asistan</title>
+  <title>DocuMind</title>
 
   <style>
     :root {
       color-scheme: dark;
-      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --background: #0b0e0b;
+      --surface: #131812;
+      --surface-raised: #1b2119;
+      --surface-muted: #101510;
+      --border: #2d382b;
+      --text: #f4f7ef;
+      --muted: #9da897;
+      --accent: #d9ff63;
+      --accent-ink: #172000;
     }
 
     * {
@@ -18,31 +27,53 @@
 
     body {
       margin: 0;
-      background: #10120f;
-      color: #f3f4ed;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 12% -10%, #344523 0, transparent 30rem),
+        radial-gradient(circle at 100% 0, #213022 0, transparent 28rem),
+        var(--background);
+      color: var(--text);
     }
 
     main {
-      width: min(920px, calc(100% - 28px));
-      margin: 28px auto;
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 34px 0 28px;
     }
 
     header {
       display: flex;
       justify-content: space-between;
-      gap: 16px;
+      gap: 24px;
       align-items: end;
-      margin-bottom: 18px;
+      margin-bottom: 20px;
     }
 
     h1 {
       margin: 0;
-      font-size: clamp(1.5rem, 4vw, 2.25rem);
+      letter-spacing: -.045em;
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      line-height: 1.05;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      margin: 0 0 10px;
+      color: var(--accent);
+      font-size: .76rem;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
     }
 
     .sub {
-      color: #a9b0a2;
-      margin: 6px 0 0;
+      max-width: 620px;
+      color: var(--muted);
+      margin: 10px 0 0;
+      font-size: 1.03rem;
+      line-height: 1.5;
     }
 
     label {
@@ -62,11 +93,20 @@
     input,
     textarea,
     select {
-      color: #f6f7f2;
-      background: #191c18;
-      border: 1px solid #343a31;
-      border-radius: 12px;
+      color: var(--text);
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: 10px;
       padding: 12px;
+      transition: border-color .18s ease, box-shadow .18s ease;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+      outline: 0;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px #d9ff6320;
     }
 
     #model {
@@ -77,8 +117,13 @@
       display: flex;
       flex-wrap: wrap;
       justify-content: flex-end;
-      gap: 10px;
+      gap: 12px;
       align-items: end;
+      padding: 14px;
+      background: #111610c9;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
     }
 
     #mode {
@@ -90,22 +135,25 @@
     }
 
     #messages {
-      min-height: 52vh;
-      max-height: 62vh;
+      min-height: 54vh;
+      max-height: 61vh;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 12px;
-      padding: 18px;
-      background: #151714;
-      border: 1px solid #292e27;
-      border-radius: 18px;
+      padding: 24px;
+      background: #121712e8;
+      border: 1px solid var(--border);
+      border-radius: 20px 20px 6px 6px;
+      box-shadow: 0 18px 50px #00000026;
+      scrollbar-color: #55634d transparent;
+      scrollbar-width: thin;
     }
 
     .message {
       max-width: 86%;
-      padding: 12px 14px;
-      border-radius: 15px;
+      padding: 13px 15px;
+      border-radius: 16px;
       line-height: 1.5;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
@@ -113,14 +161,17 @@
 
     .user {
       align-self: flex-end;
-      background: #d9ff63;
-      color: #172000;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-weight: 550;
+      box-shadow: 0 8px 18px #b6d95717;
       border-bottom-right-radius: 4px;
     }
 
     .assistant {
       align-self: flex-start;
-      background: #252a23;
+      background: var(--surface-raised);
+      border: 1px solid #313c2d;
       border-bottom-left-radius: 4px;
     }
 
@@ -166,9 +217,9 @@
     }
 
     .source-card {
-      background: #1b1f19;
-      border: 1px solid #3b4435;
-      border-radius: 12px;
+      background: #182018;
+      border: 1px solid #3d4e37;
+      border-radius: 14px;
       overflow: hidden;
     }
 
@@ -202,15 +253,19 @@
       display: flex;
       flex-wrap: wrap;
       gap: 8px 14px;
-      margin-top: 7px;
+      margin-top: 16px;
     }
 
     .badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      color: #8f9988;
-      font-size: .78rem;
+      padding: 7px 10px;
+      color: #bac5b2;
+      background: #121812a8;
+      border: 1px solid #2d382b;
+      border-radius: 999px;
+      font-size: .77rem;
     }
 
     .dot {
@@ -222,29 +277,43 @@
     }
 
     .empty {
-      color: #7f8878;
+      color: #a4ae9b;
       margin: auto;
       text-align: center;
+      max-width: 320px;
+      line-height: 1.5;
     }
 
     #chat-form {
       display: grid;
       grid-template-columns: 1fr auto;
-      gap: 10px;
-      margin-top: 12px;
+      gap: 12px;
+      margin-top: 0;
+      padding: 16px;
+      background: #151b14;
+      border: 1px solid var(--border);
+      border-top: 0;
+      border-radius: 0 0 20px 20px;
       align-items: end;
+    }
+
+    #chat-form::before {
+      content: "Mesajınız yerel yapay zekâ modeli tarafından işlenir.";
+      grid-column: 1 / -1;
+      color: #87927e;
+      font-size: .76rem;
     }
 
     .user-menu {
       display: flex;
       align-items: center;
       gap: 8px;
-      color: #c9cec4;
+      color: #d6ddd0;
     }
 
     .role-badge {
       padding: 4px 8px;
-      border: 1px solid #4a573d;
+      border: 1px solid #667f4f;
       border-radius: 999px;
       color: #d9ff63;
       font-size: .72rem;
@@ -256,26 +325,39 @@
     }
 
     .logout-button {
-      padding: 10px 12px;
-      background: #252a23;
-      color: #f3f4ed;
-      border: 1px solid #343a31;
+      padding: 9px 12px;
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .logout-button:hover:not(:disabled) {
+      background: #252d22;
+      filter: none;
+      transform: none;
     }
 
     textarea {
       resize: vertical;
       min-height: 58px;
       max-height: 180px;
+      line-height: 1.45;
     }
 
     button {
       border: 0;
-      border-radius: 12px;
+      border-radius: 10px;
       padding: 14px 20px;
-      background: #d9ff63;
-      color: #172000;
+      background: var(--accent);
+      color: var(--accent-ink);
       font-weight: 750;
       cursor: pointer;
+      transition: transform .18s ease, filter .18s ease;
+    }
+
+    button:hover:not(:disabled) {
+      filter: brightness(1.05);
+      transform: translateY(-1px);
     }
 
     button:disabled {
@@ -285,7 +367,7 @@
 
     #status {
       min-height: 22px;
-      margin: 8px 4px;
+      margin: 10px 4px 8px;
       color: #ffab91;
       font-size: .9rem;
     }
@@ -299,6 +381,7 @@
       .controls {
         align-items: stretch;
         flex-direction: column;
+        width: 100%;
       }
 
       #model,
@@ -314,6 +397,11 @@
       .user-menu {
         justify-content: space-between;
       }
+
+      #messages {
+        min-height: 50vh;
+        padding: 16px;
+      }
     }
   </style>
 </head>
@@ -322,7 +410,8 @@
   <main>
     <header>
       <div>
-        <h1 id="app-title">Ollama · Akıllı Asistan</h1>
+        <p class="eyebrow">Yerel yapay zekâ çalışma alanı</p>
+        <h1 id="app-title">DocuMind</h1>
 
         <p class="sub" id="app-subtitle">
           Sorunuzu otomatik olarak kütüphane, genel sohbet veya
@@ -333,7 +422,7 @@
           <span class="badge">
             <span class="dot"></span>
             <span id="mode-badge">
-              Yerel Ollama + Library Connector + MCP
+              Yerel yapay zekâ + Library Connector + MCP
             </span>
           </span>
 
@@ -461,10 +550,10 @@
 
     const modeConfig = {
       auto: {
-        title: 'Ollama · Akıllı Asistan',
+        title: 'DocuMind',
         subtitle:
           "Sorunuzu otomatik olarak kütüphane, genel sohbet veya ThingsBoard'a yönlendirir.",
-        badge: 'Yerel Ollama + Library Connector + MCP',
+        badge: 'Yerel yapay zekâ + Library Connector + MCP',
         placeholder:
           'Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?',
         empty: 'Otomatik yönlendirme için bir soru yazın.',
@@ -472,10 +561,10 @@
       },
 
       library: {
-        title: 'Ollama · Library Connector',
+        title: 'DocuMind · Kütüphane',
         subtitle:
           'Yalnızca masaüstü kütüphanenizdeki güncel belgelere göre yanıt verir.',
-        badge: 'Yerel Ollama + Library Connector',
+        badge: 'Yerel yapay zekâ + Library Connector',
         placeholder:
           'Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?',
         empty: 'Kütüphane belgeleriniz hakkında bir soru yazın.',
@@ -483,10 +572,10 @@
       },
 
       general: {
-        title: 'Ollama · Genel Sohbet',
+        title: 'DocuMind · Genel Sohbet',
         subtitle:
           'Kütüphane ve ThingsBoard kullanılmadan yerel modelle sohbet edin.',
-        badge: 'Yalnızca yerel Ollama',
+        badge: 'Yalnızca yerel yapay zekâ',
         placeholder:
           'Örneğin: Bana üç günlük bir çalışma planı hazırla.',
         empty: 'Genel sohbet için bir mesaj yazın.',
@@ -494,10 +583,10 @@
       },
 
       thingsboard: {
-        title: 'Ollama · ThingsBoard MCP',
+        title: 'DocuMind · ThingsBoard',
         subtitle:
           'Yalnızca ThingsBoard cihazlarını ve telemetri verilerini MCP araçlarıyla sorgular.',
-        badge: 'Yerel Ollama + ThingsBoard MCP',
+        badge: 'Yerel yapay zekâ + ThingsBoard MCP',
         placeholder:
           'Örneğin: ThingsBoard cihazlarını listele.',
         empty:
