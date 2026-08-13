@@ -75,18 +75,12 @@
 
     .controls {
       display: flex;
-      flex-wrap: wrap;
-      justify-content: flex-end;
       gap: 10px;
       align-items: end;
     }
 
     #mode {
       min-width: 150px;
-    }
-
-    #library-scope {
-      min-width: 140px;
     }
 
     #messages {
@@ -242,15 +236,6 @@
       color: #c9cec4;
     }
 
-    .role-badge {
-      padding: 4px 8px;
-      border: 1px solid #4a573d;
-      border-radius: 999px;
-      color: #d9ff63;
-      font-size: .72rem;
-      font-weight: 700;
-    }
-
     .logout-form {
       margin: 0;
     }
@@ -302,8 +287,7 @@
       }
 
       #model,
-      #mode,
-      #library-scope {
+      #mode {
         width: 100%;
       }
 
@@ -356,22 +340,6 @@
           </select>
         </label>
 
-        {% if current_user.is_admin %}
-          <label id="library-scope-control">
-            Kütüphane kapsamı
-
-            <select id="library-scope">
-              <option value="all">Tümü</option>
-
-              {% for scope in library_scopes %}
-                <option value="{{ scope.id }}">
-                  {{ scope.display_name }}
-                </option>
-              {% endfor %}
-            </select>
-          </label>
-        {% endif %}
-
         <label>
           Model
 
@@ -384,10 +352,6 @@
 
         <div class="user-menu">
           <span>{{ current_user.display_name }}</span>
-
-          {% if current_user.is_admin %}
-            <span class="role-badge">Yönetici</span>
-          {% endif %}
 
           <form
             class="logout-form"
@@ -443,10 +407,6 @@
     const promptInput = document.querySelector('#prompt');
     const modelInput = document.querySelector('#model');
     const modeInput = document.querySelector('#mode');
-    const libraryScopeInput = document.querySelector('#library-scope');
-    const libraryScopeControl = document.querySelector(
-      '#library-scope-control'
-    );
     const messages = document.querySelector('#messages');
     const status = document.querySelector('#status');
     const send = document.querySelector('#send');
@@ -454,10 +414,6 @@
     const appTitle = document.querySelector('#app-title');
     const appSubtitle = document.querySelector('#app-subtitle');
     const modeBadge = document.querySelector('#mode-badge');
-
-    function selectedLibraryScope() {
-      return libraryScopeInput?.value || 'self';
-    }
 
     const modeConfig = {
       auto: {
@@ -528,11 +484,6 @@
       modeBadge.textContent = config.badge;
       promptInput.placeholder = config.placeholder;
       libraryStatus.hidden = !config.showLibraryStatus;
-
-      if (libraryScopeControl) {
-        libraryScopeControl.hidden = !config.showLibraryStatus;
-      }
-
       document.title = config.title;
 
       if (reset) {
@@ -585,12 +536,8 @@
           ? ` · Parça ${chunkIndex + 1}`
           : '';
 
-        const ownerLabel = source.owner_name
-          ? `${source.owner_name} · `
-          : '';
-
         summary.textContent =
-          `${ownerLabel}${source.path || 'Kütüphane belgesi'}${chunkLabel}`;
+          `${source.path || 'Kütüphane belgesi'}${chunkLabel}`;
 
         details.appendChild(summary);
 
@@ -667,15 +614,6 @@
       promptInput.focus();
     });
 
-    libraryScopeInput?.addEventListener('change', () => {
-      const config =
-        modeConfig[modeInput.value] || modeConfig.auto;
-
-      resetConversation(config.empty);
-      refreshLibraryStatus();
-      promptInput.focus();
-    });
-
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
 
@@ -697,10 +635,6 @@
       send.disabled = true;
       modeInput.disabled = true;
 
-      if (libraryScopeInput) {
-        libraryScopeInput.disabled = true;
-      }
-
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -713,7 +647,6 @@
           body: JSON.stringify({
             model: modelInput.value.trim(),
             mode: modeInput.value,
-            library_scope: selectedLibraryScope(),
             messages: history
           })
         });
@@ -741,11 +674,6 @@
       } finally {
         send.disabled = false;
         modeInput.disabled = false;
-
-        if (libraryScopeInput) {
-          libraryScopeInput.disabled = false;
-        }
-
         promptInput.focus();
       }
     });
@@ -759,18 +687,8 @@
 
     async function refreshLibraryStatus() {
       try {
-        const scope = encodeURIComponent(
-          selectedLibraryScope()
-        );
-
-        const response = await fetch(
-          `/api/library/status?scope=${scope}`
-        );
-
-        if (response.status === 401) {
-          window.location.assign('/login');
-          return;
-        }
+        const response =
+          await fetch('/api/library/status');
 
         const data = await response.json();
 
@@ -780,18 +698,18 @@
           );
         }
 
+        if (data.pending) {
+          libraryStatus.lastElementChild.textContent =
+            'Kullanıcıya özel kütüphane hazırlanıyor…';
+
+          libraryStatus.title = data.folder;
+          return;
+        }
+
         libraryStatus.lastElementChild.textContent =
           `Library Connector · ${data.documents} belge, ${data.chunks} parça`;
 
-        const libraries = Array.isArray(data.libraries)
-          ? data.libraries
-          : [];
-
-        libraryStatus.title = libraries
-          .map((library) => (
-            `${library.owner_name}: ${library.folder}`
-          ))
-          .join('\n');
+        libraryStatus.title = data.folder;
       } catch (error) {
         libraryStatus.lastElementChild.textContent =
           'Library Connector bağlantı hatası';
