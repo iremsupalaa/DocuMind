@@ -1,3 +1,5 @@
+
+<img width="585" height="594" alt="Screenshot 2026-08-13 at 09 43 09" src="https://github.com/user-attachments/assets/9a1a2066-0023-4333-b46a-30954300ca7f" />
 <img width="968" height="896" alt="Screenshot 2026-08-10 at 10 03 50" src="https://github.com/user-attachments/assets/0103cb4d-052c-4a1f-a444-23a0ee96c421" />
 # Ollama ile Yerel Yapay Zekâ Uygulaması
 
