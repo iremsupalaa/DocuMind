@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="680" viewBox="0 0 1500 680" role="img" aria-labelledby="title description">
+  <title id="title">DocuMind logo concept previews</title>
+  <description id="description">Three logo concepts for DocuMind: Knowledge Node, Document Brain, and DM Monogram.</description>
+  <rect width="1500" height="680" fill="#0b0e0b"/>
+  <style>
+    .card { fill: #151b14; stroke: #2d382b; stroke-width: 2; }
+    .line { fill: none; stroke: #d9ff63; stroke-width: 10; stroke-linecap: round; stroke-linejoin: round; }
+    .muted-line { fill: none; stroke: #8fa486; stroke-width: 7; stroke-linecap: round; }
+    .node { fill: #d9ff63; }
+    .title { fill: #f4f7ef; font: 700 34px system-ui, sans-serif; }
+    .brand { fill: #f4f7ef; font: 800 46px system-ui, sans-serif; letter-spacing: -2px; }
+    .caption { fill: #9da897; font: 500 20px system-ui, sans-serif; }
+    .tag { fill: #d9ff63; font: 700 16px system-ui, sans-serif; letter-spacing: 2px; }
+  </style>
+
+  <text x="80" y="78" class="title">DOCUMIND · LOGO CONCEPTS</text>
+  <text x="80" y="114" class="caption">Document intelligence, connected knowledge and controlled access.</text>
+
+  <!-- Concept 1: Knowledge Node -->
+  <g transform="translate(80 165)">
+    <rect class="card" width="410" height="430" rx="28"/>
+    <text x="32" y="48" class="tag">01 · KNOWLEDGE NODE</text>
+    <g transform="translate(112 85)">
+      <path class="line" d="M55 20H170L225 75V230H55Z"/>
+      <path class="line" d="M170 20V75H225"/>
+      <path class="muted-line" d="M92 128H181M92 166H152"/>
+      <path class="line" d="M63 228L22 272M215 222L256 265M132 238V288"/>
+      <circle class="node" cx="20" cy="274" r="18"/>
+      <circle class="node" cx="258" cy="267" r="18"/>
+      <circle class="node" cx="132" cy="306" r="18"/>
+    </g>
+    <text x="32" y="365" class="brand">DocuMind</text>
+    <text x="32" y="401" class="caption">Document + connected knowledge</text>
+  </g>
+
+  <!-- Concept 2: Document Brain -->
+  <g transform="translate(545 165)">
+    <rect class="card" width="410" height="430" rx="28"/>
+    <text x="32" y="48" class="tag">02 · DOCUMENT BRAIN</text>
+    <g transform="translate(110 88)">
+      <path class="line" d="M48 22H170L222 74V244H48Z"/>
+      <path class="line" d="M170 22V74H222"/>
+      <path class="line" d="M97 145C75 125 88 94 114 98C124 76 160 79 167 102C194 95 208 128 189 146C205 170 182 196 160 187C143 207 111 194 113 171C88 180 72 158 97 145Z"/>
+      <path class="muted-line" d="M127 116V172M104 143H179M118 126L162 162M162 126L119 163"/>
+    </g>
+    <text x="32" y="365" class="brand">DocuMind</text>
+    <text x="32" y="401" class="caption">A clear AI-document identity</text>
+  </g>
+
+  <!-- Concept 3: DM Monogram -->
+  <g transform="translate(1010 165)">
+    <rect class="card" width="410" height="430" rx="28"/>
+    <text x="32" y="48" class="tag">03 · DM MONOGRAM</text>
+    <g transform="translate(87 84)">
+      <path class="line" d="M48 40V238H115C175 238 191 188 191 140C191 90 174 40 115 40Z"/>
+      <path class="line" d="M232 238V40L286 125L340 40V238"/>
+      <path class="muted-line" d="M95 91V186M120 91V186"/>
+      <circle class="node" cx="210" cy="140" r="15"/>
+      <path class="line" d="M191 140H171M225 140H232"/>
+    </g>
+    <text x="32" y="365" class="brand">DocuMind</text>
+    <text x="32" y="401" class="caption">Compact and corporate</text>
+  </g>
+</svg>

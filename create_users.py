@@ -45,6 +45,7 @@ def create_users_table(connection):
             folder_path TEXT UNIQUE NOT NULL,
             active BOOLEAN NOT NULL DEFAULT TRUE,
             role TEXT NOT NULL DEFAULT 'user',
+            meter_access BOOLEAN NOT NULL DEFAULT FALSE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """
@@ -120,6 +121,7 @@ def save_user(username, display_name, folder_path, password):
         ).fetchone()
 
     return row[0]
+
 
 
 def main():

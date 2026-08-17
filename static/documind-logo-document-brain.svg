@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="360" viewBox="0 0 720 360" role="img" aria-label="DocuMind Document Brain logo">
+  <rect width="720" height="360" rx="32" fill="#0b0e0b"/>
+  <g transform="translate(74 64)">
+    <path d="M42 18H142L188 64V206H42Z M142 18V64H188" fill="none" stroke="#d9ff63" stroke-width="9" stroke-linejoin="round"/>
+    <path d="M86 135C65 116 77 87 102 91C112 70 147 73 154 95C181 88 195 120 177 137C193 160 171 186 149 178C132 198 100 185 102 163C78 171 62 150 86 135Z" fill="none" stroke="#d9ff63" stroke-width="8" stroke-linejoin="round"/>
+    <path d="M115 107V161M93 135H168M105 117L150 152M150 117L106 153" fill="none" stroke="#8fa486" stroke-width="6" stroke-linecap="round"/>
+  </g>
+  <text x="340" y="160" fill="#f4f7ef" font-family="system-ui, sans-serif" font-size="57" font-weight="800" letter-spacing="-3">DocuMind</text>
+  <text x="344" y="204" fill="#9da897" font-family="system-ui, sans-serif" font-size="21">Understand every document</text>
+</svg>
