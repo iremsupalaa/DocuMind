@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.error import HTTPError, URLError
@@ -60,6 +61,28 @@ Cihaz veya ölçüm bilgilerini tahmin etme. Ölçüm istenirse gerekirse önce
 cihazları listele, sonra dönen gerçek device_id ile telemetri aracını çağır.
 Araç hatası oluşursa nedeni açıkça belirt. Cevapları kısa ve anlaşılır Türkçe
 ile ver; sayısal ölçümlerde mümkün olduğunda birimleri belirt.
+"""
+METER_TOOL_NAMES = {
+    "list_meter_devices",
+    "get_latest_meter_reading",
+    "get_meter_context",
+    "get_meter_history",
+    "get_meter_energy_summary",
+    "get_meter_connection_status",
+}
+
+METER_SYSTEM_PROMPT = """
+/no_think
+Sen NuSafe akıllı sayaç asistanısın.
+
+Yalnızca sana sağlanan MCP araç sonuçlarına dayanarak cevap ver.
+Sayaç değerlerini, tarihleri veya tüketim bilgilerini uydurma.
+Kullanıcı bir sayaç belirtmemişse önce list_meter_devices aracını kullan.
+Enerji tüketimi için get_meter_energy_summary,
+anlık değerler için get_latest_meter_reading,
+geçmiş için get_meter_history,
+bağlantı için get_meter_connection_status aracını kullan.
+Kısa, anlaşılır ve Türkçe yanıt ver.
 """
 
 LIBRARY_SYSTEM_PROMPT = """/no_think
@@ -924,6 +947,7 @@ def run_agent(
     user_libraries: Optional[
         List[Tuple[str, str, LibraryIndex]]
     ] = None,
+    can_use_meter: bool = False,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     events: List[Dict[str, Any]] = []
     user_query = next((
@@ -939,6 +963,27 @@ def run_agent(
         "list_air_quality_devices", "get_latest_air_quality",
         "get_device_context",
     )
+    meter_terms = (
+        "sayaç", "meter", "kwh", "kilovat", "kilowatt",
+        "enerji tüketimi", "toplam enerji", "anlık güç",
+        "aktif güç", "gerilim", "voltaj", "akım", "amper",
+        "frekans", "güç faktörü", "power factor",
+        "bağlantı durumu", "çevrim içi", "çevrimdışı",
+        "list_meter_devices", "get_latest_meter_reading",
+        "get_meter_context", "get_meter_history",
+        "get_meter_energy_summary",
+        "get_meter_connection_status",
+    )
+    has_meter_intent = any(
+        term in normalized_query
+        for term in meter_terms
+    )
+
+    is_meter_request = (
+        can_use_meter
+        and has_meter_intent
+    )
+    
     has_thingsboard_intent = any(
         term in normalized_query for term in thingsboard_terms
     )
@@ -949,7 +994,17 @@ def run_agent(
         or "get_device_context" in normalized_query
     ) and any(word in normalized_query for word in ("cihaz", "hava", "ölçüm", "aqi"))
 
-    if mode == "thingsboard":
+    if mode == "meter":
+        if not can_use_meter:
+            return (
+                "Bu kullanıcının sayaç ajanına erişim izni yok.",
+                events,
+            )
+        # Kullanıcı Sayaç modunu kendisi seçtiyse kısa sorular da geçerlidir.
+        is_meter_request = True
+        is_thingsboard_request = False
+
+    elif mode == "thingsboard":
         if not has_thingsboard_intent:
             return (
                 "ThingsBoard modu yalnızca cihaz, sensör ve telemetri "
@@ -958,8 +1013,10 @@ def run_agent(
                 events,
             )
         is_thingsboard_request = True
+
     elif mode in {"library", "general"}:
         is_thingsboard_request = False
+        is_meter_request = False
 
     if mode == "general":
         result = ollama_chat(model, [
@@ -975,7 +1032,7 @@ def run_agent(
         answer = clean_model_answer(result.get("message", {}).get("content", ""))
         return answer or "Model bir yanıt üretemedi.", events
 
-    if not is_thingsboard_request:
+    if not is_thingsboard_request and not is_meter_request:
         if not user_libraries:
           return (
         "Bu kullanıcı için erişilebilir bir kütüphane bulunmuyor.",
@@ -1047,7 +1104,17 @@ def run_agent(
     try:
         mcp.connect()
         mcp_tools = mcp.list_tools()
-        known_tools = {tool["name"] for tool in mcp_tools}
+        if is_meter_request:
+            mcp_tools = [
+                tool
+                for tool in mcp_tools
+                if tool["name"] in METER_TOOL_NAMES
+            ]
+
+        known_tools = {
+            tool["name"]
+            for tool in mcp_tools
+        }
         tools = mcp_tools_for_ollama(mcp_tools)
 
         if is_thingsboard_request:
@@ -1115,9 +1182,280 @@ def run_agent(
             return format_air_quality_result(
                 devices, context_payload, measurements_payload
             ), events
+        
+        if is_meter_request:
+            def call_meter_tool(
+                name: str,
+                arguments: Dict[str, Any],
+            ) -> Dict[str, Any]:
+                events.append({
+                    "type": "tool_call",
+                    "tool": name,
+                    "arguments": arguments,
+                })
+                try:
+                    result = mcp.call_tool(name, arguments)
+                except Exception as exc:
+                    result = {"isError": True, "error": str(exc)}
+                events.append({
+                    "type": "tool_result",
+                    "tool": name,
+                    "ok": not bool(result.get("isError", False)),
+                    "result": result,
+                })
+                return result
+
+            list_result = call_meter_tool(
+                "list_meter_devices",
+                {"page_size": 20, "search": ""},
+            )
+            error = tool_error_message(list_result)
+            if error:
+                return f"Sayaçlar ThingsBoard'dan alınamadı: {error}", events
+
+            meters = result_data(list_result).get("meters", [])
+            if not isinstance(meters, list) or not meters:
+                return "ThingsBoard hesabında meter profiline ait sayaç bulunamadı.", events
+
+            wants_list = any(word in normalized_query for word in (
+                "listele", "listesi", "hangi sayaç", "kaç sayaç",
+                "sayaclari", "sayaçları",
+            ))
+            wants_reading = any(word in normalized_query for word in (
+                "güncel", "anlık", "değer", "ölçüm", "güç", "enerji",
+                "gerilim", "voltaj", "akım", "frekans", "bağlantı",
+            ))
+
+            if wants_list and not wants_reading:
+                lines = [f"ThingsBoard hesabında {len(meters)} sayaç bulundu:"]
+                for index, meter in enumerate(meters, 1):
+                    lines.append(
+                        f"{index}. {meter.get('name', 'Adsız sayaç')} "
+                        f"(ID: {meter.get('device_id', '-')})"
+                    )
+                return "\n".join(lines), events
+
+            meter = meters[0]
+            meter_name = str(meter.get("name", "Sayaç"))
+            device_id = str(meter.get("device_id", ""))
+            if not device_id:
+                return "Sayaç kimliği ThingsBoard yanıtında bulunamadı.", events
+
+            wants_context = any(word in normalized_query for word in (
+                "konum", "bina", "kat", "model", "seri numarası",
+                "seri no", "firmware", "nerede",
+            ))
+            wants_connection = any(word in normalized_query for word in (
+                "çevrim içi", "çevrimiçi", "çevrim dışı", "offline",
+                "online", "son telemetri", "bağlantı durumu",
+                "bağlantı bilgi", "son veri", "ne zaman veri",
+                "veri ne zaman", "veri gelmiş",
+            ))
+            wants_history = any(word in normalized_query for word in (
+                "geçmiş", "değişmiş", "değişim", "son bir saat",
+                "son 24 saat", "grafik", "trend",
+            ))
+            wants_summary = any(word in normalized_query for word in (
+                "bugün tüketti", "bugünkü tüketim", "tüketim kaç",
+                "tükettiği enerji", "enerji özeti",
+            ))
+
+            context_labels = (
+                ("building", "Bina", ("bina",)),
+                ("floor", "Kat", ("kat",)),
+                ("location", "Konum", ("konum", "nerede")),
+                ("model", "Model", ("model",)),
+                ("firmwareVersion", "Firmware", ("firmware",)),
+                ("meterType", "Sayaç tipi", ("sayaç tipi", "faz")),
+                ("serialNumber", "Seri numarası", ("seri numarası", "seri no")),
+            )
+            requested_context_keys = [
+                key
+                for key, _label, phrases in context_labels
+                if any(phrase in normalized_query for phrase in phrases)
+            ]
+
+            # Kullanıcı yalnızca "cihaz bilgileri" dediyse tüm bağlamı göster.
+            if wants_context and not requested_context_keys:
+                requested_context_keys = [
+                    key for key, _label, _phrases in context_labels
+                ]
+
+            if wants_context:
+                context_result = call_meter_tool(
+                    "get_meter_context",
+                    {"device_id": device_id},
+                )
+                error = tool_error_message(context_result)
+                if error:
+                    return f"Sayaç bağlam bilgileri alınamadı: {error}", events
+
+                attributes = result_data(context_result).get("attributes", {})
+                if not isinstance(attributes, dict):
+                    attributes = {}
+                lines = [f"{meter_name} cihaz bilgileri:"]
+                for key, label, _phrases in context_labels:
+                    if key not in requested_context_keys:
+                        continue
+                    value = attributes.get(key)
+                    if value is not None:
+                        lines.append(f"• {label}: {value}")
+                if len(lines) == 1:
+                    lines.append("• Cihaz için ek bağlam bilgisi tanımlanmamış.")
+                return "\n".join(lines), events
+
+            if wants_connection:
+                connection_result = call_meter_tool(
+                    "get_meter_connection_status",
+                    {"device_id": device_id},
+                )
+                error = tool_error_message(connection_result)
+                if error:
+                    return f"Bağlantı durumu alınamadı: {error}", events
+
+                status = result_data(connection_result)
+                reported_status = status.get(
+                    "reported_status",
+                    "bilinmiyor",
+                )
+                last_telemetry_at = status.get(
+                    "last_telemetry_at",
+                    "bilinmiyor",
+                )
+                freshness = status.get(
+                    "freshness",
+                    "Veri güncelliği hesaplanamadı.",
+                )
+
+                return (
+                    f"{meter_name} bağlantı bilgisi:\n"
+                    f"• Cihazın son bildirdiği durum: {reported_status}\n"
+                    f"• Son telemetri zamanı: {last_telemetry_at}\n"
+                    f"• Veri güncelliği: {freshness}",
+                    events,
+                )
+
+            now_ms = int(time.time() * 1000)
+
+            if wants_summary:
+                today_start = datetime.now().replace(
+                    hour=0,
+                    minute=0,
+                    second=0,
+                    microsecond=0,
+                )
+                summary_result = call_meter_tool(
+                    "get_meter_energy_summary",
+                    {
+                        "device_id": device_id,
+                        "start_ts": int(today_start.timestamp() * 1000),
+                        "end_ts": now_ms,
+                    },
+                )
+                error = tool_error_message(summary_result)
+                if error:
+                    return f"Enerji özeti alınamadı: {error}", events
+
+                summary = result_data(summary_result)
+                if summary.get("error"):
+                    return str(summary["error"]), events
+                return (
+                    f"{meter_name} bugünkü enerji özeti:\n"
+                    f"• Başlangıç: {summary.get('start_energy_kwh', '-')} kWh\n"
+                    f"• Güncel: {summary.get('end_energy_kwh', '-')} kWh\n"
+                    f"• Tüketim: {summary.get('consumption_kwh', '-')} kWh",
+                    events,
+                )
+
+            if wants_history:
+                hours = 24 if "24" in normalized_query else 1
+                metric = "voltage_v" if any(word in normalized_query for word in (
+                    "gerilim", "voltaj",
+                )) else "active_power_kw"
+                history_result = call_meter_tool(
+                    "get_meter_history",
+                    {
+                        "device_id": device_id,
+                        "metric": metric,
+                        "start_ts": now_ms - (hours * 60 * 60 * 1000),
+                        "end_ts": now_ms,
+                    },
+                )
+                error = tool_error_message(history_result)
+                if error:
+                    return f"Sayaç geçmişi alınamadı: {error}", events
+
+                history = result_data(history_result)
+                points = history.get("points", [])
+                if not points:
+                    return (
+                        f"Son {hours} saat için {metric} geçmiş verisi bulunamadı.",
+                        events,
+                    )
+                return (
+                    f"{meter_name} için son {hours} saatlik {metric} geçmişi:\n"
+                    f"• Veri noktası sayısı: {len(points)}\n"
+                    f"• İlk değer: {points[0].get('value', '-')}\n"
+                    f"• Son değer: {points[-1].get('value', '-')}",
+                    events,
+                )
+
+            reading_result = call_meter_tool(
+                "get_latest_meter_reading",
+                {"device_id": device_id},
+            )
+            error = tool_error_message(reading_result)
+            if error:
+                return f"Sayaç verileri alınamadı: {error}", events
+
+            measurements = result_data(reading_result).get("measurements", {})
+            if not isinstance(measurements, dict):
+                measurements = {}
+
+            def measurement_value(key: str) -> str:
+                item = measurements.get(key)
+                if isinstance(item, dict):
+                    return str(item.get("value", "-"))
+                return "-"
+
+            measurement_labels = (
+                ("energy_total_kwh", "Toplam enerji", "kWh", ("enerji", "kwh")),
+                ("active_power_kw", "Anlık aktif güç", "kW", ("güç", "kw")),
+                ("voltage_v", "Gerilim", "V", ("gerilim", "voltaj")),
+                ("current_a", "Akım", "A", ("akım", "amper")),
+                ("frequency_hz", "Frekans", "Hz", ("frekans", "hz")),
+                ("power_factor", "Güç faktörü", "", ("güç faktörü", "cos")),
+                ("connection_status", "Bağlantı durumu", "", ("bağlantı", "online", "offline")),
+            )
+            requested_measurement_keys = [
+                key
+                for key, _label, _unit, phrases in measurement_labels
+                if any(phrase in normalized_query for phrase in phrases)
+            ]
+            if not requested_measurement_keys:
+                requested_measurement_keys = [
+                    key for key, _label, _unit, _phrases in measurement_labels
+                ]
+
+            lines = [f"{meter_name} güncel değerleri:"]
+            for key, label, unit, _phrases in measurement_labels:
+                if key not in requested_measurement_keys:
+                    continue
+                suffix = f" {unit}" if unit else ""
+                lines.append(
+                    f"• {label}: {measurement_value(key)}{suffix}"
+                )
+            return "\n".join(lines), events
 
         messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+                 {
+                "role": "system",
+                "content": (
+                    METER_SYSTEM_PROMPT
+                    if is_meter_request
+                    else SYSTEM_PROMPT
+                ),
+            },
             *browser_messages,
         ]
         completed_calls: Dict[str, Dict[str, Any]] = {}
@@ -1323,8 +1661,16 @@ def api_chat():
             "library",
             "general",
             "thingsboard",
+            "meter",
         }:
+            
             mode = "auto"
+        if mode == "meter" and not current_user.can_use_meter:
+            return jsonify({
+                "error": (
+                    "Sayaç ajanına erişim yetkiniz bulunmuyor."
+                )
+            }), 403
 
         if not isinstance(messages, list) or not messages:
             return jsonify({
@@ -1341,6 +1687,7 @@ def api_chat():
             messages,
             mode,
             user_libraries=selected_libraries,
+            can_use_meter=current_user.can_use_meter,
         )
 
         return jsonify({
