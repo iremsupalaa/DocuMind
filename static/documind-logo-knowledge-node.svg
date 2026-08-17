@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="360" viewBox="0 0 720 360" role="img" aria-label="DocuMind Knowledge Node logo">
+  <rect width="720" height="360" rx="32" fill="#0b0e0b"/>
+  <g transform="translate(78 65)">
+    <path d="M42 18H142L188 64V198H42Z M142 18V64H188" fill="none" stroke="#d9ff63" stroke-width="9" stroke-linejoin="round"/>
+    <path d="M72 111H153M72 148H128" fill="none" stroke="#8fa486" stroke-width="7" stroke-linecap="round"/>
+    <path d="M51 196L18 230M180 191L214 224M115 202V245" fill="none" stroke="#d9ff63" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="16" cy="232" r="15" fill="#d9ff63"/><circle cx="216" cy="226" r="15" fill="#d9ff63"/><circle cx="115" cy="260" r="15" fill="#d9ff63"/>
+  </g>
+  <text x="340" y="160" fill="#f4f7ef" font-family="system-ui, sans-serif" font-size="57" font-weight="800" letter-spacing="-3">DocuMind</text>
+  <text x="344" y="204" fill="#9da897" font-family="system-ui, sans-serif" font-size="21">Connected document intelligence</text>
+</svg>

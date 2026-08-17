@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="360" viewBox="0 0 720 360" role="img" aria-label="DocuMind DM Monogram logo">
+  <rect width="720" height="360" rx="32" fill="#0b0e0b"/>
+  <g transform="translate(72 59)" fill="none" stroke="#d9ff63" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M40 38V220H100C155 220 171 174 171 129C171 84 155 38 100 38Z"/>
+    <path d="M208 220V38L260 118L312 38V220"/>
+    <path d="M77 84V173M101 84V173" stroke="#8fa486" stroke-width="7"/>
+    <path d="M171 129H190M222 129H208"/>
+  </g>
+  <circle cx="280" cy="188" r="15" fill="#d9ff63"/>
+  <text x="340" y="160" fill="#f4f7ef" font-family="system-ui, sans-serif" font-size="57" font-weight="800" letter-spacing="-3">DocuMind</text>
+  <text x="344" y="204" fill="#9da897" font-family="system-ui, sans-serif" font-size="21">Document intelligence platform</text>
+</svg>

@@ -56,7 +56,7 @@ class User(UserMixin):
         return self.role == "admin"
 
     @property
-    def can_use_meter(self) -> bool: #kullanıcının meter agent'ına erişim izni var mı?
+    def can_use_meter(self) -> bool:
         return bool(self.meter_access)
 
 

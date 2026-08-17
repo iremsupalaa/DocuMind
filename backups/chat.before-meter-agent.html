@@ -1,0 +1,901 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>DocuMind</title>
+
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --background: #0b0e0b;
+      --surface: #131812;
+      --surface-raised: #1b2119;
+      --surface-muted: #101510;
+      --border: #2d382b;
+      --text: #f4f7ef;
+      --muted: #9da897;
+      --accent: #d9ff63;
+      --accent-ink: #172000;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 12% -10%, #344523 0, transparent 30rem),
+        radial-gradient(circle at 100% 0, #213022 0, transparent 28rem),
+        var(--background);
+      color: var(--text);
+    }
+
+    main {
+      width: min(1120px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 34px 0 28px;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: end;
+      margin-bottom: 20px;
+    }
+
+    h1 {
+      margin: 0;
+      letter-spacing: -.045em;
+      font-size: clamp(2rem, 4vw, 3.2rem);
+      line-height: 1.05;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      margin: 0 0 10px;
+      color: var(--accent);
+      font-size: .76rem;
+      font-weight: 800;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .sub {
+      max-width: 620px;
+      color: var(--muted);
+      margin: 10px 0 0;
+      font-size: 1.03rem;
+      line-height: 1.5;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: #c9cec4;
+      font-size: .85rem;
+    }
+
+    input,
+    textarea,
+    button,
+    select {
+      font: inherit;
+    }
+
+    input,
+    textarea,
+    select {
+      color: var(--text);
+      background: var(--surface-muted);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      transition: border-color .18s ease, box-shadow .18s ease;
+    }
+
+    input:focus,
+    textarea:focus,
+    select:focus {
+      outline: 0;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px #d9ff6320;
+    }
+
+    #model {
+      width: 170px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 12px;
+      align-items: end;
+      padding: 14px;
+      background: #111610c9;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+    }
+
+    #mode {
+      min-width: 150px;
+    }
+
+    #library-scope {
+      min-width: 140px;
+    }
+
+    #messages {
+      min-height: 54vh;
+      max-height: 61vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 24px;
+      background: #121712e8;
+      border: 1px solid var(--border);
+      border-radius: 20px 20px 6px 6px;
+      box-shadow: 0 18px 50px #00000026;
+      scrollbar-color: #55634d transparent;
+      scrollbar-width: thin;
+    }
+
+    .message {
+      max-width: 86%;
+      padding: 13px 15px;
+      border-radius: 16px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .user {
+      align-self: flex-end;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-weight: 550;
+      box-shadow: 0 8px 18px #b6d95717;
+      border-bottom-right-radius: 4px;
+    }
+
+    .assistant {
+      align-self: flex-start;
+      background: var(--surface-raised);
+      border: 1px solid #313c2d;
+      border-bottom-left-radius: 4px;
+    }
+
+    .trace {
+      align-self: flex-start;
+      width: min(94%, 760px);
+      border: 1px solid #3b4435;
+      border-radius: 14px;
+      background: #1b1f19;
+      overflow: hidden;
+    }
+
+    .trace.error {
+      border-color: #78483b;
+    }
+
+    .trace summary {
+      cursor: pointer;
+      padding: 11px 13px;
+      color: #d9ff63;
+      font-size: .88rem;
+      font-weight: 700;
+    }
+
+    .trace.error summary {
+      color: #ffab91;
+    }
+
+    .trace pre {
+      margin: 0;
+      padding: 0 13px 13px;
+      color: #c9cec4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: .79rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .sources {
+      align-self: flex-start;
+      display: grid;
+      gap: 8px;
+      width: min(94%, 760px);
+    }
+
+    .source-card {
+      background: #182018;
+      border: 1px solid #3d4e37;
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .source-card summary {
+      cursor: pointer;
+      padding: 11px 13px;
+      color: #d9ff63;
+      font-weight: 700;
+    }
+
+    .source-card summary:hover {
+      background: #242922;
+    }
+
+    .source-info {
+      padding: 0 13px 8px;
+      color: #8f9988;
+      font-size: .78rem;
+    }
+
+    .source-card pre {
+      margin: 0;
+      padding: 0 13px 13px;
+      color: #c9cec4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font: .79rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      margin-top: 16px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 10px;
+      color: #bac5b2;
+      background: #121812a8;
+      border: 1px solid #2d382b;
+      border-radius: 999px;
+      font-size: .77rem;
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #d9ff63;
+      box-shadow: 0 0 10px #d9ff6388;
+    }
+
+    .empty {
+      color: #a4ae9b;
+      margin: auto;
+      text-align: center;
+      max-width: 320px;
+      line-height: 1.5;
+    }
+
+    #chat-form {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      margin-top: 0;
+      padding: 16px;
+      background: #151b14;
+      border: 1px solid var(--border);
+      border-top: 0;
+      border-radius: 0 0 20px 20px;
+      align-items: end;
+    }
+
+    #chat-form::before {
+      content: "Mesajınız yerel yapay zekâ modeli tarafından işlenir.";
+      grid-column: 1 / -1;
+      color: #87927e;
+      font-size: .76rem;
+    }
+
+    .user-menu {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #d6ddd0;
+    }
+
+    .role-badge {
+      padding: 4px 8px;
+      border: 1px solid #667f4f;
+      border-radius: 999px;
+      color: #d9ff63;
+      font-size: .72rem;
+      font-weight: 700;
+    }
+
+    .logout-form {
+      margin: 0;
+    }
+
+    .logout-button {
+      padding: 9px 12px;
+      background: transparent;
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .logout-button:hover:not(:disabled) {
+      background: #252d22;
+      filter: none;
+      transform: none;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 58px;
+      max-height: 180px;
+      line-height: 1.45;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 14px 20px;
+      background: var(--accent);
+      color: var(--accent-ink);
+      font-weight: 750;
+      cursor: pointer;
+      transition: transform .18s ease, filter .18s ease;
+    }
+
+    button:hover:not(:disabled) {
+      filter: brightness(1.05);
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: .55;
+      cursor: wait;
+    }
+
+    #status {
+      min-height: 22px;
+      margin: 10px 4px 8px;
+      color: #ffab91;
+      font-size: .9rem;
+    }
+
+    @media (max-width: 680px) {
+      header {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .controls {
+        align-items: stretch;
+        flex-direction: column;
+        width: 100%;
+      }
+
+      #model,
+      #mode,
+      #library-scope {
+        width: 100%;
+      }
+
+      #chat-form {
+        grid-template-columns: 1fr;
+      }
+
+      .user-menu {
+        justify-content: space-between;
+      }
+
+      #messages {
+        min-height: 50vh;
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Yerel yapay zekâ çalışma alanı</p>
+        <h1 id="app-title">DocuMind</h1>
+
+        <p class="sub" id="app-subtitle">
+          Sorunuzu otomatik olarak kütüphane, genel sohbet veya
+          ThingsBoard'a yönlendirir.
+        </p>
+
+        <div class="badges">
+          <span class="badge">
+            <span class="dot"></span>
+            <span id="mode-badge">
+              Yerel yapay zekâ + Library Connector + MCP
+            </span>
+          </span>
+
+          <span class="badge" id="library-status">
+            <span class="dot"></span>
+            <span>Library Connector kontrol ediliyor…</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="controls">
+        <label>
+          Çalışma modu
+
+          <select id="mode">
+            <option value="auto">Otomatik</option>
+            <option value="library">Kütüphane</option>
+            <option value="general">Genel sohbet</option>
+            <option value="thingsboard">ThingsBoard</option>
+          </select>
+        </label>
+
+        {% if current_user.is_admin %}
+          <label id="library-scope-control">
+            Kütüphane kapsamı
+
+            <select id="library-scope">
+              <option value="all">Tümü</option>
+
+              {% for scope in library_scopes %}
+                <option value="{{ scope.id }}">
+                  {{ scope.display_name }}
+                </option>
+              {% endfor %}
+            </select>
+          </label>
+        {% endif %}
+
+        <label>
+          Model
+
+          <input
+            id="model"
+            value="gemma3:4b"
+            autocomplete="off"
+          >
+        </label>
+
+        <div class="user-menu">
+          <span>{{ current_user.display_name }}</span>
+
+          {% if current_user.is_admin %}
+            <span class="role-badge">Yönetici</span>
+          {% endif %}
+
+          <form
+            class="logout-form"
+            method="post"
+            action="{{ url_for('logout') }}"
+          >
+            <input
+              type="hidden"
+              name="csrf_token"
+              value="{{ csrf_token() }}"
+            >
+
+            <button
+              class="logout-button"
+              type="submit"
+            >
+              Çıkış
+            </button>
+          </form>
+        </div>
+      </div>
+    </header>
+
+    <section id="messages" aria-live="polite">
+      <p class="empty">
+        Bir soru yazarak sohbete başlayın.
+      </p>
+    </section>
+
+    <div id="status" role="status"></div>
+
+    <form id="chat-form">
+      <textarea
+        id="prompt"
+        placeholder="Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?"
+        required
+      ></textarea>
+
+      <button id="send" type="submit">
+        Gönder
+      </button>
+    </form>
+  </main>
+
+  <script>
+    const history = [];
+
+    const csrfToken = document
+      .querySelector('meta[name="csrf-token"]')
+      .getAttribute('content');
+
+    const form = document.querySelector('#chat-form');
+    const promptInput = document.querySelector('#prompt');
+    const modelInput = document.querySelector('#model');
+    const modeInput = document.querySelector('#mode');
+    const libraryScopeInput = document.querySelector('#library-scope');
+    const libraryScopeControl = document.querySelector(
+      '#library-scope-control'
+    );
+    const messages = document.querySelector('#messages');
+    const status = document.querySelector('#status');
+    const send = document.querySelector('#send');
+    const libraryStatus = document.querySelector('#library-status');
+    const appTitle = document.querySelector('#app-title');
+    const appSubtitle = document.querySelector('#app-subtitle');
+    const modeBadge = document.querySelector('#mode-badge');
+
+    function selectedLibraryScope() {
+      return libraryScopeInput?.value || 'self';
+    }
+
+    const modeConfig = {
+      auto: {
+        title: 'DocuMind',
+        subtitle:
+          "Sorunuzu otomatik olarak kütüphane, genel sohbet veya ThingsBoard'a yönlendirir.",
+        badge: 'Yerel yapay zekâ + Library Connector + MCP',
+        placeholder:
+          'Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?',
+        empty: 'Otomatik yönlendirme için bir soru yazın.',
+        showLibraryStatus: true
+      },
+
+      library: {
+        title: 'DocuMind · Kütüphane',
+        subtitle:
+          'Yalnızca masaüstü kütüphanenizdeki güncel belgelere göre yanıt verir.',
+        badge: 'Yerel yapay zekâ + Library Connector',
+        placeholder:
+          'Örneğin: Masaldaki Ada ormanda kiminle karşılaştı?',
+        empty: 'Kütüphane belgeleriniz hakkında bir soru yazın.',
+        showLibraryStatus: true
+      },
+
+      general: {
+        title: 'DocuMind · Genel Sohbet',
+        subtitle:
+          'Kütüphane ve ThingsBoard kullanılmadan yerel modelle sohbet edin.',
+        badge: 'Yalnızca yerel yapay zekâ',
+        placeholder:
+          'Örneğin: Bana üç günlük bir çalışma planı hazırla.',
+        empty: 'Genel sohbet için bir mesaj yazın.',
+        showLibraryStatus: false
+      },
+
+      thingsboard: {
+        title: 'DocuMind · ThingsBoard',
+        subtitle:
+          'Yalnızca ThingsBoard cihazlarını ve telemetri verilerini MCP araçlarıyla sorgular.',
+        badge: 'Yerel yapay zekâ + ThingsBoard MCP',
+        placeholder:
+          'Örneğin: ThingsBoard cihazlarını listele.',
+        empty:
+          'ThingsBoard cihazları veya ölçümleri hakkında bir soru yazın.',
+        showLibraryStatus: false
+      }
+    };
+
+    function resetConversation(emptyText) {
+      history.length = 0;
+      messages.replaceChildren();
+
+      const empty = document.createElement('p');
+      empty.className = 'empty';
+      empty.textContent = emptyText;
+
+      messages.appendChild(empty);
+      status.textContent = '';
+      promptInput.value = '';
+    }
+
+    function applyModeUI({ reset = false } = {}) {
+      const config =
+        modeConfig[modeInput.value] || modeConfig.auto;
+
+      appTitle.textContent = config.title;
+      appSubtitle.textContent = config.subtitle;
+      modeBadge.textContent = config.badge;
+      promptInput.placeholder = config.placeholder;
+      libraryStatus.hidden = !config.showLibraryStatus;
+
+      if (libraryScopeControl) {
+        libraryScopeControl.hidden = !config.showLibraryStatus;
+      }
+
+      document.title = config.title;
+
+      if (reset) {
+        resetConversation(config.empty);
+      }
+    }
+
+    function addMessage(role, content) {
+      messages.querySelector('.empty')?.remove();
+
+      const item = document.createElement('div');
+      item.className = `message ${role}`;
+      item.textContent = content;
+
+      messages.appendChild(item);
+      messages.scrollTop = messages.scrollHeight;
+
+      return item;
+    }
+
+    function percent(value) {
+      const number = Number(value);
+
+      return Number.isFinite(number)
+        ? `%${Math.round(number * 100)}`
+        : null;
+    }
+
+    function addSources(sources = []) {
+      if (!Array.isArray(sources) || !sources.length) {
+        return;
+      }
+
+      const container = document.createElement('div');
+      container.className = 'sources';
+
+      for (const rawSource of sources) {
+        const source =
+          typeof rawSource === 'string'
+            ? { path: rawSource }
+            : (rawSource || {});
+
+        const details = document.createElement('details');
+        details.className = 'source-card';
+
+        const summary = document.createElement('summary');
+        const chunkIndex = Number(source.chunk_index);
+
+        const chunkLabel = Number.isInteger(chunkIndex)
+          ? ` · Parça ${chunkIndex + 1}`
+          : '';
+
+        const ownerLabel = source.owner_name
+          ? `${source.owner_name} · `
+          : '';
+
+        summary.textContent =
+          `${ownerLabel}${source.path || 'Kütüphane belgesi'}${chunkLabel}`;
+
+        details.appendChild(summary);
+
+        const scores = [
+          ['Toplam', percent(source.score)],
+          ['Semantik', percent(source.semantic_score)],
+          ['Kelime', percent(source.keyword_score)]
+        ].filter(([, value]) => value);
+
+        if (scores.length) {
+          const info = document.createElement('div');
+          info.className = 'source-info';
+          info.textContent = scores
+            .map(([label, value]) => `${label} ${value}`)
+            .join(' · ');
+
+          details.appendChild(info);
+        }
+
+        if (source.content) {
+          const content = document.createElement('pre');
+          content.textContent = source.content;
+          details.appendChild(content);
+        }
+
+        container.appendChild(details);
+      }
+
+      messages.appendChild(container);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function addToolEvents(events = []) {
+      for (const event of events) {
+        if (event.type === 'library_retrieval') {
+          addSources(event.result?.sources || []);
+          continue;
+        }
+
+        const details = document.createElement('details');
+        details.className =
+          `trace ${event.ok === false ? 'error' : ''}`;
+
+        details.open = event.type === 'tool_call';
+
+        const summary = document.createElement('summary');
+
+        summary.textContent =
+          event.type === 'tool_call'
+            ? `MCP aracı çağrıldı · ${event.tool}`
+            : `${event.ok
+                ? 'MCP sonucu başarılı'
+                : 'MCP sonucu hatalı'} · ${event.tool}`;
+
+        const body = document.createElement('pre');
+
+        body.textContent = JSON.stringify(
+          event.type === 'tool_call'
+            ? event.arguments
+            : event.result,
+          null,
+          2
+        );
+
+        details.append(summary, body);
+        messages.appendChild(details);
+      }
+
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    modeInput.addEventListener('change', () => {
+      applyModeUI({ reset: true });
+      promptInput.focus();
+    });
+
+    libraryScopeInput?.addEventListener('change', () => {
+      const config =
+        modeConfig[modeInput.value] || modeConfig.auto;
+
+      resetConversation(config.empty);
+      refreshLibraryStatus();
+      promptInput.focus();
+    });
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+
+      const content = promptInput.value.trim();
+
+      if (!content) {
+        return;
+      }
+
+      history.push({
+        role: 'user',
+        content
+      });
+
+      addMessage('user', content);
+
+      promptInput.value = '';
+      status.textContent = 'Model düşünüyor…';
+      send.disabled = true;
+      modeInput.disabled = true;
+
+      if (libraryScopeInput) {
+        libraryScopeInput.disabled = true;
+      }
+
+      try {
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken
+          },
+
+          body: JSON.stringify({
+            model: modelInput.value.trim(),
+            mode: modeInput.value,
+            library_scope: selectedLibraryScope(),
+            messages: history
+          })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || 'İstek başarısız oldu.'
+          );
+        }
+
+        addToolEvents(data.events);
+
+        history.push({
+          role: 'assistant',
+          content: data.content
+        });
+
+        addMessage('assistant', data.content);
+        status.textContent = '';
+      } catch (error) {
+        history.pop();
+        status.textContent = error.message;
+      } finally {
+        send.disabled = false;
+        modeInput.disabled = false;
+
+        if (libraryScopeInput) {
+          libraryScopeInput.disabled = false;
+        }
+
+        promptInput.focus();
+      }
+    });
+
+    promptInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+
+    async function refreshLibraryStatus() {
+      try {
+        const scope = encodeURIComponent(
+          selectedLibraryScope()
+        );
+
+        const response = await fetch(
+          `/api/library/status?scope=${scope}`
+        );
+
+        if (response.status === 401) {
+          window.location.assign('/login');
+          return;
+        }
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || 'Kütüphane durumu alınamadı.'
+          );
+        }
+
+        libraryStatus.lastElementChild.textContent =
+          `Library Connector · ${data.documents} belge, ${data.chunks} parça`;
+
+        const libraries = Array.isArray(data.libraries)
+          ? data.libraries
+          : [];
+
+        libraryStatus.title = libraries
+          .map((library) => (
+            `${library.owner_name}: ${library.folder}`
+          ))
+          .join('\n');
+      } catch (error) {
+        libraryStatus.lastElementChild.textContent =
+          'Library Connector bağlantı hatası';
+
+        libraryStatus.title = error.message;
+      }
+    }
+
+    applyModeUI();
+    refreshLibraryStatus();
+
+    setInterval(
+      refreshLibraryStatus,
+      5000
+    );
+  </script>
+</body>
+</html>

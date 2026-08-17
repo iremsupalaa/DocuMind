@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 
-"""Kullanıcı bulma ve parola doğrulama işlemleri."""
+
+
+"""Kullanıcı bulma ve parola doğrulama işlemleri.
+Kullanıcı adını küçük harfe dönüştürüyor.
+Kullanıcıyı PostgreSQL’de arıyor.
+Kullanıcının aktif olup olmadığını kontrol ediyor.
+Girilen parolayı Argon2 ile doğruluyor.
+Başarılıysa kullanıcı nesnesini döndürüyor.
+Hatalı kullanıcı adı veya parolada None döndürüyor."""
 
 import os
 from typing import Optional
@@ -36,7 +44,6 @@ class User(UserMixin):
         folder_path: str,
         active: bool,
         role: str,
-        meter_access: bool,
     ):
         self.id = str(user_id)
         self.username = username
@@ -45,7 +52,6 @@ class User(UserMixin):
         self.folder_path = folder_path
         self.active = active
         self.role = role
-        self.meter_access = meter_access
 
     @property
     def is_active(self) -> bool:
@@ -54,10 +60,6 @@ class User(UserMixin):
     @property
     def is_admin(self) -> bool:
         return self.role == "admin"
-
-    @property
-    def can_use_meter(self) -> bool: #kullanıcının meter agent'ına erişim izni var mı?
-        return bool(self.meter_access)
 
 
 def row_to_user(row) -> Optional[User]:
@@ -73,8 +75,7 @@ def row_to_user(row) -> Optional[User]:
         password_hash=row["password_hash"],
         folder_path=row["folder_path"],
         active=row["active"],
-        role=row["role"],
-        meter_access=row["meter_access"],
+        role = row["role"],
     )
 
 
@@ -99,8 +100,7 @@ def get_user_by_id(user_id: str) -> Optional[User]:
                 password_hash,
                 folder_path,
                 active,
-                role,
-                meter_access
+                role
             FROM users
             WHERE id = %s
             """,
@@ -131,8 +131,7 @@ def get_user_by_username(username: str) -> Optional[User]:
                 password_hash,
                 folder_path,
                 active,
-                role,
-                meter_access
+                role
             FROM users
             WHERE username = %s
             """,
@@ -169,7 +168,10 @@ def authenticate_user(
 
     user = get_user_by_username(username)
 
-    if user is None or not user.is_active:
+    if user is None:
+        return None
+
+    if not user.is_active:
         return None
 
     try:
