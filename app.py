@@ -190,21 +190,33 @@ def format_air_quality_result(
     devices: List[Dict[str, Any]],
     context: Optional[Dict[str, Any]] = None,
     measurements: Optional[Dict[str, Any]] = None,
+    include_device_list: bool = True,
 ) -> str:
     """Sık kullanılan hava kalitesi sorgularını modelsiz ve güvenilir biçimde biçimler."""
     if not devices:
         return "ThingsBoard hesabında hava kalitesi cihazı bulunamadı."
 
-    lines = [f"ThingsBoard hesabında {len(devices)} cihaz bulundu:"]
-    for index, device in enumerate(devices, 1):
-        lines.append(
-            f"{index}. {device.get('name', 'Adsız cihaz')} "
-            f"(ID: {device.get('id', '-')}, tür: {device.get('type', '-')})"
-        )
+    lines: List[str] = []
+    if include_device_list:
+        lines.append(f"ThingsBoard hesabında {len(devices)} hava kalitesi cihazı bulundu:")
+        for index, device in enumerate(devices, 1):
+            lines.append(
+                f"{index}. {device.get('name', 'Adsız cihaz')} "
+                f"(ID: {device.get('id', '-')}, tür: {device.get('type', '-')})"
+            )
 
     first = devices[0]
     if context:
-        attributes = context.get("attributes", context)
+        # MCP sunucuları bağlam verisini doğrudan sözlük, ``attributes``
+        # altında sözlük ya da anahtar/değer listesi olarak döndürebilir.
+        # Hepsini ortak bir sözlüğe dönüştürürüz.
+        attributes = context.get("attributes")
+        if attributes is None:
+            attributes = context.get("context")
+        if attributes is None:
+            attributes = context.get("data")
+        if attributes is None:
+            attributes = context
         if isinstance(attributes, list):
             attributes = {
                 item.get("key"): item.get("value")
@@ -220,7 +232,15 @@ def format_air_quality_result(
                 if attributes.get(key) is not None:
                     details.append(f"{label}: {attributes[key]}")
             if details:
-                lines.append(f"İlk cihazın bilgileri — {', '.join(details)}.")
+                lines.append(
+                    f"{first.get('name', 'Cihaz')} cihaz bilgileri — "
+                    f"{', '.join(details)}."
+                )
+            else:
+                lines.append(
+                    f"{first.get('name', 'Cihaz')} için bina, kat, oda, model "
+                    "veya firmware bilgisi ThingsBoard'da tanımlanmamış."
+                )
 
     if measurements:
         telemetry = measurements.get("telemetry", measurements)
@@ -255,6 +275,26 @@ def format_air_quality_result(
             except ValueError:
                 pass
     return "\n\n".join(lines)
+
+
+def is_air_quality_device(device: Dict[str, Any]) -> bool:
+    """Eski genel cihaz listesinden yalnızca hava kalitesi cihazlarını ayıklar."""
+    device_type = str(device.get("type", "")).strip().casefold()
+    return device_type in {
+        "default",
+        "air_quality",
+        "air-quality",
+        "air quality",
+    }
+
+
+def thingsboard_error_message(action: str, error: str) -> str:
+    """Teknik MCP/HTTP ayrıntılarını arayüz yerine sunucu günlüğünde tutar."""
+    print(f"[ThingsBoard hata] {action}: {error}")
+    return (
+        f"{action} şu anda ThingsBoard'dan alınamadı. "
+        "Bağlantıyı kontrol edip kısa süre sonra tekrar deneyin."
+    )
 
 
 def tool_error_message(result: Dict[str, Any]) -> Optional[str]:
@@ -482,12 +522,13 @@ def run_agent(
     has_thingsboard_intent = any(
         term in normalized_query for term in thingsboard_terms
     )
+    # Otomatik modda hava kalitesiyle ilgili doğal dil sorularını,
+    # belge aramasından önce ThingsBoard akışına yönlendir. Sayaç akışı
+    # daha özel olduğu için önceliklidir.
     is_thingsboard_request = (
-        "thingsboard" in normalized_query
-        or "list_air_quality_devices" in normalized_query
-        or "get_latest_air_quality" in normalized_query
-        or "get_device_context" in normalized_query
-    ) and any(word in normalized_query for word in ("cihaz", "hava", "ölçüm", "aqi"))
+        has_thingsboard_intent
+        and not is_meter_request
+    )
 
     if mode == "meter": #kullanıcı arayüzden sayaç modunu seçtiğinde soru çok kısa bile olsa sayaç akışı zorunlu hale gelir 
         if not can_use_meter:
@@ -508,6 +549,7 @@ def run_agent(
                 events,
             )
         is_thingsboard_request = True
+        is_meter_request = False
 
     elif mode in {"library", "general"}:
         is_thingsboard_request = False
@@ -632,29 +674,66 @@ def run_agent(
             )
             error = tool_error_message(list_result)
             if error:
-                return f"ThingsBoard cihazları alınamadı: {error}", events
+                return thingsboard_error_message(
+                    "Hava kalitesi cihazları", error
+                ), events
 
             devices_payload = result_data(list_result)
             devices = devices_payload.get("devices", [])
             if not isinstance(devices, list):
                 devices = []
 
+            # Bu mod yalnızca hava kalitesi aracına aittir. MCP sunucusu tenant
+            # içindeki bütün cihazları döndürse bile sayaçları burada göstermeyiz.
+            devices = [
+                device
+                for device in devices
+                if isinstance(device, dict) and is_air_quality_device(device)
+            ]
+
+            is_listing_request = any(word in normalized_query for word in (
+                "liste", "list", "hangi cihaz", "cihazlar",
+            ))
+
             wants_context = any(word in normalized_query for word in (
                 "konum", "model", "firmware", "bina", "oda", "kat",
-                "get_device_context",
+                "seri numarası", "seri no", "bilgi", "detay",
+                "özellik", "get_device_context",
             ))
             wants_measurements = any(word in normalized_query for word in (
                 "ölçüm", "sıcaklık", "sicaklik", "nem", "co₂", "co2",
                 "pm2.5", "pm10", "voc", "aqi", "batarya", "değerlendir",
-                "get_latest_air_quality",
+                "telemetri", "son veri", "get_latest_air_quality",
             ))
+
+            # Adı açıkça yazılmışsa o cihaz seçilir. Birden fazla hava kalitesi
+            # cihazı varsa ve ad belirtilmemişse, rastgele ilk cihaz seçilmez.
+            named_devices = [
+                device for device in devices
+                if str(device.get("name", "")).casefold() in normalized_query
+            ]
+            selected_devices = named_devices or devices
+            if (
+                not is_listing_request
+                and (wants_context or wants_measurements)
+                and len(selected_devices) > 1
+            ):
+                names = ", ".join(
+                    str(device.get("name", "Adsız cihaz"))
+                    for device in selected_devices
+                )
+                return (
+                    f"Hangi hava kalitesi cihazını kastediyorsunuz? "
+                    f"Şunlardan birini yazın: {names}.",
+                    events,
+                )
 
             context_payload: Optional[Dict[str, Any]] = None
             measurements_payload: Optional[Dict[str, Any]] = None
-            if devices and (wants_context or wants_measurements):
-                device_id = str(devices[0].get("id", ""))
+            if selected_devices and (wants_context or wants_measurements):
+                device_id = str(selected_devices[0].get("id", ""))
                 if not device_id:
-                    return "İlk cihazın kimliği ThingsBoard yanıtında bulunamadı.", events
+                    return "Seçilen cihazın kimliği ThingsBoard yanıtında bulunamadı.", events
 
                 if wants_context:
                     context_result = call_and_record(
@@ -662,7 +741,9 @@ def run_agent(
                     )
                     error = tool_error_message(context_result)
                     if error:
-                        return f"Cihaz bilgileri alınamadı: {error}", events
+                        return thingsboard_error_message(
+                            "Cihaz bilgileri", error
+                        ), events
                     context_payload = result_data(context_result)
 
                 if wants_measurements:
@@ -671,11 +752,16 @@ def run_agent(
                     )
                     error = tool_error_message(measurements_result)
                     if error:
-                        return f"Son hava kalitesi ölçümleri alınamadı: {error}", events
+                        return thingsboard_error_message(
+                            "Son hava kalitesi ölçümleri", error
+                        ), events
                     measurements_payload = result_data(measurements_result)
 
             return format_air_quality_result(
-                devices, context_payload, measurements_payload
+                selected_devices,
+                context_payload,
+                measurements_payload,
+                include_device_list=is_listing_request,
             ), events
 
         if is_meter_request:

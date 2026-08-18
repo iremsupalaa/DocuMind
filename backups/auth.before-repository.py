@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
+
 """Kullanıcı bulma ve parola doğrulama işlemleri."""
 
-from typing import Any, Dict, Optional
+import os
+from typing import Optional
 
+import psycopg
 from argon2 import PasswordHasher
 from argon2.exceptions import (
     InvalidHashError,
@@ -10,13 +13,13 @@ from argon2.exceptions import (
     VerifyMismatchError,
 )
 from flask_login import UserMixin
+from psycopg.rows import dict_row
 
-from repositories.user_repository import (
-    get_user_row_by_id,
-    get_user_row_by_username,
-    update_user_password_hash,
+
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql:///ollama_library",
 )
-
 
 password_hasher = PasswordHasher()
 
@@ -46,22 +49,19 @@ class User(UserMixin):
 
     @property
     def is_active(self) -> bool:
-        """Kullanıcının hesabının aktif olup olmadığını döndürür."""
         return bool(self.active)
 
     @property
     def is_admin(self) -> bool:
-        """Kullanıcının yönetici rolünde olup olmadığını döndürür."""
         return self.role == "admin"
 
     @property
-    def can_use_meter(self) -> bool:
-        """Kullanıcının sayaç ajanına erişim iznini döndürür."""
+    def can_use_meter(self) -> bool: #kullanıcının meter agent'ına erişim izni var mı?
         return bool(self.meter_access)
 
 
-def row_to_user(row: Optional[Dict[str, Any]]) -> Optional[User]:
-    """Veritabanı satırını Flask-Login User nesnesine dönüştürür."""
+def row_to_user(row) -> Optional[User]:
+    """PostgreSQL satırını User nesnesine dönüştürür."""
 
     if row is None:
         return None
@@ -74,7 +74,7 @@ def row_to_user(row: Optional[Dict[str, Any]]) -> Optional[User]:
         folder_path=row["folder_path"],
         active=row["active"],
         role=row["role"],
-        meter_access=row.get("meter_access", False),
+        meter_access=row["meter_access"],
     )
 
 
@@ -86,7 +86,28 @@ def get_user_by_id(user_id: str) -> Optional[User]:
     except (TypeError, ValueError):
         return None
 
-    return row_to_user(get_user_row_by_id(numeric_user_id))
+    with psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row,
+    ) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                id,
+                username,
+                display_name,
+                password_hash,
+                folder_path,
+                active,
+                role,
+                meter_access
+            FROM users
+            WHERE id = %s
+            """,
+            (numeric_user_id,),
+        ).fetchone()
+
+    return row_to_user(row)
 
 
 def get_user_by_username(username: str) -> Optional[User]:
@@ -97,20 +118,47 @@ def get_user_by_username(username: str) -> Optional[User]:
     if not normalized_username:
         return None
 
-    return row_to_user(
-        get_user_row_by_username(normalized_username)
-    )
+    with psycopg.connect(
+        DATABASE_URL,
+        row_factory=dict_row,
+    ) as connection:
+        row = connection.execute(
+            """
+            SELECT
+                id,
+                username,
+                display_name,
+                password_hash,
+                folder_path,
+                active,
+                role,
+                meter_access
+            FROM users
+            WHERE username = %s
+            """,
+            (normalized_username,),
+        ).fetchone()
+
+    return row_to_user(row)
 
 
 def update_password_hash(user_id: str, password: str) -> None:
-    """Parola özetini güncel Argon2 ayarlarıyla yeniler."""
+    """Eski Argon2 ayarlarıyla üretilen özeti gerektiğinde yeniler."""
 
     new_password_hash = password_hasher.hash(password)
 
-    update_user_password_hash(
-        user_id=int(user_id),
-        password_hash=new_password_hash,
-    )
+    with psycopg.connect(DATABASE_URL) as connection:
+        connection.execute(
+            """
+            UPDATE users
+            SET password_hash = %s
+            WHERE id = %s
+            """,
+            (
+                new_password_hash,
+                int(user_id),
+            ),
+        )
 
 
 def authenticate_user(

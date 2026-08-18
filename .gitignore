@@ -1,5 +1,10 @@
+#python önbelleği
 __pycache__/
 *.py[cod]
 library.db
 library.db-shm
 library.db-wal
+
+# Sanal ortam
+.venv/
+venv/
