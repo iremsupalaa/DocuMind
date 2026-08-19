@@ -14,7 +14,6 @@ from flask_login import UserMixin
 from repositories.user_repository import (
     get_user_row_by_id,
     get_user_row_by_username,
-    get_user_row_by_thingsboard_email,
     update_user_password_hash,
 )
 
@@ -102,19 +101,6 @@ def get_user_by_username(username: str) -> Optional[User]:
         get_user_row_by_username(normalized_username)
     )
 
-def get_user_by_thingsboard_email(
-    email: str,
-) -> Optional[User]:
-    """ThingsBoard e-posta eşleştirmesiyle yerel DocuMind kullanıcısını getirir."""
-
-    normalized_email = email.strip().lower()
-
-    if not normalized_email:
-        return None
-
-    return row_to_user(
-        get_user_row_by_thingsboard_email(normalized_email)
-    )
 
 def update_password_hash(user_id: str, password: str) -> None:
     """Parola özetini güncel Argon2 ayarlarıyla yeniler."""
