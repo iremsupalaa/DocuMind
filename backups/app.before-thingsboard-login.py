@@ -875,58 +875,27 @@ def run_agent(
 
 
 @app.route("/login", methods=["GET", "POST"])
-
 def login_page():
-    """ThingsBoard hesabıyla giriş yapılmasını sağlar."""
-
     if current_user.is_authenticated:
         return redirect(url_for("chat_page"))
 
     error = None
-    email = ""
 
     if request.method == "POST":
-        email = (
-            request.form.get("email")
-            or request.form.get("username", "")
-        ).strip().lower()
-
+        username = request.form.get("username", "")
         password = request.form.get("password", "")
 
-        if not email or not password:
-            error = "E-posta adresi ve parola zorunludur."
+        user = authenticate_user(username, password)
+
+        if user is None:
+            error = "Kullanıcı adı veya parola hatalı."
         else:
-            try:
-                # E-posta ve parola ThingsBoard üzerinden doğrulanır.
-                tb_session = authenticate_thingsboard_user(
-                    email=email,
-                    password=password,
-                )
-
-                # ThingsBoard hesabı yerel DocuMind kullanıcısıyla eşleştirilir.
-                user = get_user_by_thingsboard_email(
-                    tb_session.user.email
-                )
-
-                if user is None:
-                    error = (
-                        "ThingsBoard girişi başarılı, ancak bu hesap "
-                        "DocuMind kullanıcısıyla eşleştirilmemiş."
-                    )
-                elif not user.is_active:
-                    error = "DocuMind hesabınız aktif değil."
-                else:
-                    login_user(user)
-                    return redirect(url_for("chat_page"))
-
-            except ThingsBoardAuthError as exception:
-                print(f"[ThingsBoard giriş hatası] e-posta={email}: {exception}")
-                error = str(exception)
+            login_user(user)
+            return redirect(url_for("chat_page"))
 
     return render_template(
         "login.html",
         error=error,
-        email=email,
     )
 
 
