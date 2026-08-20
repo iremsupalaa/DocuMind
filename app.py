@@ -23,6 +23,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    session,
     url_for,
 )
 from flask_login import (
@@ -495,6 +496,7 @@ def run_agent(
         List[Tuple[str, str, LibraryIndex]]
     ] = None,
     can_use_meter: bool = False,
+    tb_customer_id: str = "",
 ) -> Tuple[str, List[Dict[str, Any]]]:
     events: List[Dict[str, Any]] = []
     user_query = next((
@@ -668,6 +670,7 @@ def run_agent(
 
         if is_thingsboard_request:
             def call_and_record(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+                print(f"[DEBUG] MCP çağrısı: {name} -> {arguments}")
                 events.append({"type": "tool_call", "tool": name, "arguments": arguments})
                 try:
                     result = mcp.call_tool(name, arguments)
@@ -682,7 +685,15 @@ def run_agent(
                 return result
 
             list_result = call_and_record(
-                "list_air_quality_devices", {"page_size": 10, "search": ""}
+                "list_air_quality_devices",
+                {
+                    "page_size": 10,
+                    "search": "",
+                    # boşsa tüm tenant cihazları,
+                    # doluysa yalnızca o customer'a
+                    # ThingsBoard tarafında atanmış cihazlar listelenir.
+                    "customer_id": tb_customer_id,
+                },
             )
             error = tool_error_message(list_result)
             if error:
@@ -695,8 +706,7 @@ def run_agent(
             if not isinstance(devices, list):
                 devices = []
 
-            # Bu mod yalnızca hava kalitesi aracına aittir. MCP sunucusu tenant
-            # içindeki bütün cihazları döndürse bile sayaçları burada göstermeyiz.
+            
             devices = [
                 device
                 for device in devices
@@ -718,8 +728,7 @@ def run_agent(
                 "telemetri", "son veri", "get_latest_air_quality",
             ))
 
-            # Adı açıkça yazılmışsa o cihaz seçilir. Birden fazla hava kalitesi
-            # cihazı varsa ve ad belirtilmemişse, rastgele ilk cihaz seçilmez.
+           
             named_devices = [
                 device for device in devices
                 if str(device.get("name", "")).casefold() in normalized_query
@@ -886,6 +895,7 @@ def login_page():
     email = ""
 
     if request.method == "POST":
+        # "username" eski login.html ile geçici uyumluluk sağlar.
         email = (
             request.form.get("email")
             or request.form.get("username", "")
@@ -916,10 +926,15 @@ def login_page():
                 elif not user.is_active:
                     error = "DocuMind hesabınız aktif değil."
                 else:
+                   
+                    session["tb_customer_id"] = ( #login basarılıysa customer_id oturuma yazılıyor
+                        tb_session.user.customer_id or ""
+                    )
                     login_user(user)
                     return redirect(url_for("chat_page"))
 
             except ThingsBoardAuthError as exception:
+                
                 print(f"[ThingsBoard giriş hatası] e-posta={email}: {exception}")
                 error = str(exception)
 
@@ -933,6 +948,7 @@ def login_page():
 @app.post("/logout")
 @login_required
 def logout():
+    session.pop("tb_customer_id", None) #logoutta siliniyor 
     logout_user()
     return redirect(url_for("login_page"))
 
@@ -1055,6 +1071,7 @@ def api_chat():
             mode,
             user_libraries=selected_libraries,
             can_use_meter=current_user.can_use_meter,
+            tb_customer_id=session.get("tb_customer_id", ""),
         )
 
         return jsonify({
