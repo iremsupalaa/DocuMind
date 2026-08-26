@@ -63,7 +63,6 @@ APP_DIR = Path(__file__).resolve().parent
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("APP_PORT", "8080"))
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
-DEFAULT_OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma3:4b")
 MCP_URL = os.environ.get("MCP_URL", "http://127.0.0.1:8000/mcp")
 LIBRARY_DIR = Path(os.environ.get(
     "LIBRARY_DIR", str(Path.home() / "Desktop" / "Library-Connector")
@@ -73,9 +72,6 @@ DATABASE_URL = os.environ.get(
 )
 LIBRARY_SCAN_SECONDS = float(os.environ.get("LIBRARY_SCAN_SECONDS", "2"))
 MAX_TOOL_ROUNDS = 2
-METER_MODEL_FORMATTING = os.environ.get(
-    "METER_MODEL_FORMATTING", "true"
-).strip().casefold() in {"1", "true", "yes", "on"}
 
 SYSTEM_PROMPT = """/no_think
 Sen ThingsBoard hava kalitesi sistemine ve yerel belge kütüphanesine bağlı
@@ -489,92 +485,6 @@ def ollama_chat(
         return json.loads(response.read())
 
 
-def installed_ollama_models() -> List[str]:
-    """Yerel Ollama'da kurulu model etiketlerini döndürür."""
-    request = Request(
-        f"{OLLAMA_URL}/api/tags",
-        headers={"Accept": "application/json"},
-        method="GET",
-    )
-    with urlopen(request, timeout=10) as response:
-        payload = json.loads(response.read())
-
-    return [
-        str(item.get("name", "")).strip()
-        for item in payload.get("models", [])
-        if str(item.get("name", "")).strip()
-    ]
-
-
-def validate_ollama_model(model: Any) -> str:
-    """Arayüzden gelen model adını temizler ve kurulu olduğunu doğrular."""
-    selected = str(model or DEFAULT_OLLAMA_MODEL).strip()
-    if not selected:
-        selected = DEFAULT_OLLAMA_MODEL
-    if not re.fullmatch(r"[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?", selected):
-        raise ValueError("Geçersiz Ollama model adı.")
-
-    installed = installed_ollama_models()
-    if selected not in installed:
-        available = ", ".join(installed) or "kurulu model yok"
-        raise ValueError(
-            f"'{selected}' Ollama'da kurulu değil. Kurulu modeller: {available}"
-        )
-    return selected
-
-
-def format_meter_answer_with_model(
-    model: str,
-    answer: str,
-) -> Tuple[str, bool]:
-    """Kısa sayaç sonucunu modele yazdırır; uzun listeleri aynen korur."""
-    # Bir dil modeline yüzlerce doğrulanmış satırı yeniden yazdırmak hem
-    # yavaştır hem de satır atlama/uydurma riski taşır. Liste ve uzun sonuçlar
-    # meter_service tarafından üretildiği haliyle eksiksiz döndürülür.
-    if len(answer) > 1800 or answer.count("\n") > 35:
-        return answer, False
-    protected_messages = (
-        "belirtin",
-        "en az iki",
-        "bulunamadı",
-        "alınamadı",
-        "yapılamadı",
-        "tanımlanmamış",
-        "hata:",
-        "enerji karşılaştırması:",
-        "faz gerilim karşılaştırması:",
-        "faz akım karşılaştırması:",
-        "faz güç faktörü karşılaştırması:",
-    )
-    if any(message in answer.casefold() for message in protected_messages):
-        return answer, False
-
-    result = ollama_chat(
-        model,
-        [
-            {
-                "role": "system",
-                "content": (
-                    "/no_think\nYalnızca Türkçe cevap ver. Aşağıdaki doğrulanmış "
-                    "sayaç sonucunu doğrudan ve kısa biçimde sun. Giriş cümlesi, "
-                    "yorum, açıklama veya başlık ekleme. ESM gibi kısaltmaları "
-                    "açıklamaya çalışma. Hiçbir sayı, birim, sayaç adı, tarih, "
-                    "sıralama veya durumu değiştirme; yeni bilgi ekleme."
-                ),
-            },
-            {
-                "role": "user",
-                "content": f"Doğrulanmış araç sonucu:\n\n{answer}",
-            },
-        ],
-        [],
-    )
-    formatted = clean_model_answer(
-        result.get("message", {}).get("content", "")
-    )
-    return (formatted or answer), True
-
-
 def mcp_tools_for_ollama(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [{
         "type": "function",
@@ -613,7 +523,7 @@ def run_agent(
         "get_device_context",
     )
     meter_terms = (
-        "sayaç", "sayac", "meter", "kwh", "kilovat", "kilowatt",
+        "sayaç", "meter", "kwh", "kilovat", "kilowatt",
         "enerji tüketimi", "toplam enerji", "anlık güç",
         "aktif güç", "gerilim", "voltaj", "akım", "amper",
         "frekans", "güç faktörü", "power factor",
@@ -894,37 +804,10 @@ def run_agent(
             ), events
 
         if is_meter_request:
-            meter_answer, meter_events = answer_meter_question(
+            return answer_meter_question(
                 query=user_query,
                 mcp=mcp,
             )
-            events.extend(meter_events)
-
-            if METER_MODEL_FORMATTING:
-                started_at = time.perf_counter()
-                meter_answer, model_used = format_meter_answer_with_model(
-                    model,
-                    meter_answer,
-                )
-                events.append({
-                    "type": (
-                        "model_response"
-                        if model_used
-                        else "model_skipped"
-                    ),
-                    "model": model,
-                    "elapsed_seconds": round(
-                        time.perf_counter() - started_at,
-                        3,
-                    ),
-                    "reason": (
-                        None
-                        if model_used
-                        else "Uzun/liste sonucu doğruluğu korumak için aynen döndürüldü."
-                    ),
-                })
-
-            return meter_answer, events
 
 
         messages: List[Dict[str, Any]] = [
@@ -1169,9 +1052,7 @@ def api_chat():
     try:
         body = request.get_json(silent=True) or {}
 
-        model = validate_ollama_model(
-            body.get("model", DEFAULT_OLLAMA_MODEL)
-        )
+        model = body.get("model", "gemma3:4b")
         mode = body.get("mode", "auto")
         messages = body.get("messages", [])
         requested_scope = str( body.get("library_scope", "self"))
@@ -1214,10 +1095,6 @@ def api_chat():
         return jsonify({
             "content": content,
             "events": events,
-            "model": model,
-            "model_used": bool(
-                mode != "meter" or METER_MODEL_FORMATTING
-            ),
         })
 
     except HTTPError as exc:
@@ -1261,11 +1138,6 @@ if __name__ == "__main__":
     )
     print(f"Giriş sayfası: http://{HOST}:{PORT}/login")
     print(f"Ollama: {OLLAMA_URL}")
-    print(f"Varsayılan model: {DEFAULT_OLLAMA_MODEL}")
-    print(
-        "Sayaç cevaplarında model biçimlendirmesi: "
-        f"{'açık' if METER_MODEL_FORMATTING else 'kapalı'}"
-    )
     print(f"MCP: {MCP_URL}")
     print(f"Kullanıcı kütüphanesi sayısı: {len(library_indexes)}")
     print("Veritabanı: PostgreSQL + pgvector")

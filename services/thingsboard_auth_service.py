@@ -369,7 +369,7 @@ class ThingsBoardAuthService:
                 payload.get("authority") or ""
             ).strip(),
             tenant_id=self._entity_id(payload.get("tenantId")),
-            customer_id=self._entity_id(payload.get("customerId")),
+            customer_id=self._entity_id(payload.get("customerId")), #kullanıcı giriş yaptığında döner
         )
 
 
