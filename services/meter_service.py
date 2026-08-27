@@ -4,6 +4,7 @@ import re
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
+from zoneinfo import ZoneInfo
 
 from services.mcp_service import MCPClient, result_data, tool_error_message
 
@@ -24,6 +25,155 @@ METRIC_LABELS = {
     "power_factor_l3": ("L3 güç faktörü", ""),
     "frequency_hz": ("Frekans", "Hz"),
 }
+
+LOCAL_TIMEZONE = ZoneInfo("Europe/Istanbul")
+
+
+def today_time_range(query: str) -> Tuple[datetime, datetime] | None:
+    """'Bugün 9-10' benzeri bir ifadeyi yerel zaman aralığına dönüştürür."""
+    normalized = query.casefold()
+    if "bugün" not in normalized and "bugun" not in normalized:
+        return None
+    match = re.search(
+        r"(\d{1,2})(?:[.:](\d{2}))?\s*"
+        r"(?:-|–|—|ile)\s*"
+        r"(\d{1,2})(?:[.:](\d{2}))?",
+        normalized,
+    )
+    if not match:
+        return None
+    start_hour = int(match.group(1))
+    start_minute = int(match.group(2) or 0)
+    end_hour = int(match.group(3))
+    end_minute = int(match.group(4) or 0)
+    if not (0 <= start_hour <= 23 and 0 <= end_hour <= 23):
+        return None
+    if not (0 <= start_minute <= 59 and 0 <= end_minute <= 59):
+        return None
+    today = datetime.now(LOCAL_TIMEZONE)
+    start = today.replace(
+        hour=start_hour, minute=start_minute, second=0, microsecond=0
+    )
+    end = today.replace(
+        hour=end_hour, minute=end_minute, second=0, microsecond=0
+    )
+    if end <= start:
+        return None
+    return start, end
+
+
+def query_time_range(query: str) -> Tuple[datetime, datetime, str]:
+    """Son 31 gündeki tarihi ve isteğe bağlı saat aralığını çözümler."""
+    now = datetime.now(LOCAL_TIMEZONE)
+    normalized = query.casefold()
+    date_match = re.search(
+        r"\b(?:(\d{1,2})[./](\d{1,2})[./](\d{4})|"
+        r"(\d{4})-(\d{1,2})-(\d{1,2}))\b",
+        normalized,
+    )
+    if date_match:
+        if date_match.group(1):
+            day, month, year = map(int, date_match.group(1, 2, 3))
+        else:
+            year, month, day = map(int, date_match.group(4, 5, 6))
+        try:
+            selected = datetime(year, month, day, tzinfo=LOCAL_TIMEZONE)
+        except ValueError as exc:
+            raise ValueError("Geçersiz tarih yazıldı.") from exc
+    else:
+        selected = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    age_days = (today.date() - selected.date()).days
+    if age_days < 0:
+        raise ValueError("Gelecekteki bir tarih sorgulanamaz.")
+    if age_days > 31:
+        raise ValueError("Yalnızca son 31 gün içindeki tarihler sorgulanabilir.")
+    time_source = re.sub(
+        r"\b(?:\d{1,2}[./]\d{1,2}[./]\d{4}|\d{4}-\d{1,2}-\d{1,2})\b",
+        " ",
+        normalized,
+    )
+    time_match = re.search(
+        r"(\d{1,2})(?:[.:](\d{2}))?\s*(?:-|–|—|ile)\s*"
+        r"(\d{1,2})(?:[.:](\d{2}))?",
+        time_source,
+    )
+    if time_match:
+        sh, sm = int(time_match.group(1)), int(time_match.group(2) or 0)
+        eh, em = int(time_match.group(3)), int(time_match.group(4) or 0)
+        if not (0 <= sh <= 23 and 0 <= eh <= 23 and 0 <= sm <= 59 and 0 <= em <= 59):
+            raise ValueError("Geçersiz saat aralığı yazıldı.")
+        start = selected.replace(hour=sh, minute=sm)
+        end = selected.replace(hour=eh, minute=em)
+        if end <= start:
+            raise ValueError("Saat aralığının bitişi başlangıçtan sonra olmalıdır.")
+        label = f"{selected:%d.%m.%Y} {start:%H:%M}-{end:%H:%M}"
+    else:
+        start = selected
+        end = min(selected + timedelta(days=1), now)
+        label = f"{selected:%d.%m.%Y}"
+    return start, end, label
+
+
+def explicit_query_dates(query: str) -> List[datetime]:
+    """Sorgudaki açık tarihleri tekrarları korumadan yerel tarihe dönüştürür."""
+    matches = re.findall(
+        r"\b(?:(\d{1,2})[./](\d{1,2})[./](\d{4})|"
+        r"(\d{4})-(\d{1,2})-(\d{1,2}))\b",
+        query,
+    )
+    dates: List[datetime] = []
+    for first_day, first_month, first_year, iso_year, iso_month, iso_day in matches:
+        if first_day:
+            day, month, year = int(first_day), int(first_month), int(first_year)
+        else:
+            year, month, day = int(iso_year), int(iso_month), int(iso_day)
+        try:
+            value = datetime(year, month, day, tzinfo=LOCAL_TIMEZONE)
+        except ValueError:
+            continue
+        if value not in dates:
+            dates.append(value)
+    return dates
+
+
+def requested_threshold(query: str) -> Tuple[float | None, str | None]:
+    """230 V üstü veya 5 A altı gibi eşik ifadelerini çözümler."""
+    match = re.search(
+        r"(\d+(?:[.,]\d+)?)\s*(?:v|a|hz)?(?:['’](?:u|ü|ı|i|nun|nün|nın|nin))?"
+        r"[^\d]{0,35}?"
+        r"(üst(?:ü|ünde|üne)?|üzer(?:i|inde|ine)?|aş(?:tı|an|mış)?|"
+        r"alt(?:ı|ında|ına)?|düş(?:tü|en|müş)|düşük)",
+        query.casefold(),
+    )
+    if not match:
+        return None, None
+    threshold = float(match.group(1).replace(",", "."))
+    word = match.group(2)
+    comparison = "lt" if word.startswith(("alt", "düş")) else "gt"
+    return threshold, comparison
+
+
+def requested_analysis_metric(query: str) -> str:
+    """Zaman sözcüklerini enerji metriği sanmadan açıkça istenen metriği seçer."""
+    normalized = query.casefold()
+    phase_match = re.search(r"\bl([123])\b", normalized)
+    phase = phase_match.group(1) if phase_match else "1"
+    if "gerilim" in normalized or "voltaj" in normalized:
+        return f"voltage_l{phase}_v"
+    if "akım" in normalized or "amper" in normalized:
+        return f"current_l{phase}_a"
+    if "güç faktörü" in normalized or "power factor" in normalized or "cos" in normalized:
+        return f"power_factor_l{phase}"
+    if "frekans" in normalized or re.search(r"\bhz\b", normalized):
+        return "frequency_hz"
+    if "aylık enerji" in normalized or "aylık tüketim" in normalized:
+        return "monthly_energy_kwh"
+    if "haftalık enerji" in normalized or "haftalık tüketim" in normalized:
+        return "weekly_energy_kwh"
+    if "günlük enerji" in normalized or "günlük tüketim" in normalized:
+        return "daily_energy_kwh"
+    return "energy_total_kwh"
 
 
 def requested_bulk_metrics(query: str) -> List[str]:
@@ -140,7 +290,9 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
         "frekans sınırı", "telemetrisi eksik",
     ))
     wants_grouping = any(phrase in normalized_query for phrase in (
-        "katlara göre", "kata göre", "güç kaynağına göre",
+        "katlara göre", "kata göre", "hangi katta", "katta olduğu",
+        "katta olduğunu", "kat listesi", "kat bazında",
+        "güç kaynağına göre",
         "duruma göre", "hata koduna göre", "hata kodlarına göre",
         "faz sayısına göre", "grupla", "gruplandır",
     ))
@@ -150,11 +302,80 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
         "kaç sayaç veri", "toplam günlük tüketim",
         "toplam haftalık tüketim", "toplam aylık tüketim",
     ))
+    wants_transmission_count = any(phrase in normalized_query for phrase in (
+        "kaç kere veri", "kaç kez veri", "kaç defa veri",
+        "kaç kayıt", "veri sayısı", "telemetri sayısı",
+    ))
+    wants_data_quality = any(phrase in normalized_query for phrase in (
+        "null veri", "null değer", "eksik veri", "boş veri",
+        "veri kalitesi", "alan eksik", "telemetri eksik",
+    ))
+    wants_metric_analysis = any(phrase in normalized_query for phrase in (
+        "minimum", "min ", "en düşük değer", "maksimum", "max ",
+        "en yüksek değer", "ortalama", "kaç kez aşt", "kaç kere aşt",
+        "kaç defa aşt", "kaç kez üst", "kaç kere üst", "kaç kez alt",
+        "eşik", "hangi saatte en yüksek", "hangi saatte en düşük",
+    )) or bool(re.search(
+        r"kaç\s+(?:kez|kere|defa).{0,40}(?:aşt|üst|alt|düş)",
+        normalized_query,
+    ))
+    date_mentions = explicit_query_dates(query)
+    wants_date_energy_comparison = (
+        len(date_mentions) >= 2
+        and wants_comparison
+        and any(term in normalized_query for term in ("enerji", "tüketim", "kwh"))
+    )
+    wants_seven_day_peak = (
+        any(phrase in normalized_query for phrase in ("son 7 gün", "son yedi gün"))
+        and any(phrase in normalized_query for phrase in ("en fazla", "en yüksek", "maksimum"))
+    )
+    wants_thirty_day_summary = (
+        any(phrase in normalized_query for phrase in ("son 30 gün", "son otuz gün"))
+        and any(phrase in normalized_query for phrase in ("ortalama", "en yüksek", "en fazla"))
+    )
+    wants_interval_energy_ranking = (
+        bool(date_mentions)
+        and "sayaç" in normalized_query
+        and any(phrase in normalized_query for phrase in (
+            "en çok enerji tüketen", "en fazla enerji tüketen",
+            "en yüksek tüketimli", "enerji tüketen 5", "tüketen ilk",
+        ))
+    )
+
+    if wants_interval_energy_ranking:
+        try:
+            start_at, end_at, range_label = query_time_range(query)
+        except ValueError as exc:
+            return str(exc), events
+        limit_match = re.search(r"(?:ilk|en çok|en fazla)?\s*(\d{1,3})\s+saya", normalized_query)
+        limit = min(max(int(limit_match.group(1)), 1), 100) if limit_match else 5
+        ranking_result = call_meter_tool(
+            "rank_meters_by_interval_energy",
+            {
+                "start_ts": int(start_at.timestamp() * 1000),
+                "end_ts": int(end_at.timestamp() * 1000),
+                "limit": limit,
+            },
+        )
+        error = tool_error_message(ranking_result)
+        if error:
+            return f"Zaman aralığı tüketim sıralaması yapılamadı: {error}", events
+        ranking = result_data(ranking_result)
+        if ranking.get("error"):
+            return str(ranking["error"]), events
+        lines = [f"{range_label} tüketimi en yüksek {limit} sayaç:"]
+        for index, meter in enumerate(ranking.get("meters", []), 1):
+            lines.append(
+                f"{index}. {meter.get('name', 'Adsız sayaç')}: "
+                f"{meter.get('consumption_kwh', '-')} kWh"
+            )
+        return "\n".join(lines), events
 
     if (
         wants_comparison
         and not wants_period_comparison
         and not wants_phase_comparison
+        and not wants_date_energy_comparison
     ):
         meter_names = query_meter_names(query)
         if len(meter_names) < 2:
@@ -184,8 +405,23 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
             lines.append(f"\nBulunamayan sayaçlar: {', '.join(map(str, missing))}")
         return "\n".join(lines), events
 
-    if wants_ranking:
-        metric = requested_bulk_metrics(query)[0]
+    if (
+        wants_ranking
+        and not wants_phase_comparison
+        and not wants_metric_analysis
+        and not wants_seven_day_peak
+        and not wants_thirty_day_summary
+        and not wants_interval_energy_ranking
+    ):
+        requested_metrics = requested_bulk_metrics(query)
+        if "aylık" in normalized_query or "aylik" in normalized_query:
+            metric = "monthly_energy_kwh"
+        elif "haftalık" in normalized_query or "haftalik" in normalized_query:
+            metric = "weekly_energy_kwh"
+        elif "günlük" in normalized_query or "gunluk" in normalized_query:
+            metric = "daily_energy_kwh"
+        else:
+            metric = requested_metrics[0]
         order = "asc" if any(phrase in normalized_query for phrase in (
             "en düşük", "küçükten büyüğe",
         )) else "desc"
@@ -206,12 +442,63 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
             return str(ranking["error"]), events
         label, unit = METRIC_LABELS.get(metric, (metric, ""))
         lines = [f"{label} ölçümüne göre sayaç sıralaması:"]
-        for index, meter in enumerate(ranking.get("meters", []), 1):
+        ranked_meters = ranking.get("meters", [])
+        for index, meter in enumerate(ranked_meters, 1):
             suffix = f" {unit}" if unit else ""
+            value = meter.get("value")
+            if isinstance(value, float):
+                rendered_value = f"{value:.3f}".rstrip("0").rstrip(".")
+            else:
+                rendered_value = str(value if value is not None else "-")
             lines.append(
                 f"{index}. {meter.get('name', 'Adsız sayaç')}: "
-                f"{meter.get('value', '-')}{suffix}"
+                f"{rendered_value}{suffix}"
             )
+
+        supplemental_metrics = [
+            item for item in requested_metrics if item != metric
+        ]
+        top_count = 0
+        top_match = re.search(r"ilk\s+(\d{1,2})", normalized_query)
+        if top_match:
+            top_count = int(top_match.group(1))
+        else:
+            number_words = {
+                "bir": 1, "iki": 2, "üç": 3, "uc": 3,
+                "dört": 4, "dort": 4, "beş": 5, "bes": 5,
+            }
+            for word, number in number_words.items():
+                if f"ilk {word}" in normalized_query:
+                    top_count = number
+                    break
+
+        if supplemental_metrics and top_count and ranked_meters:
+            selected = ranked_meters[:min(top_count, len(ranked_meters))]
+            selected_names = [
+                str(item.get("name", ""))
+                for item in selected
+                if item.get("name")
+            ]
+            detail_result = call_meter_tool(
+                "compare_meter_devices",
+                {
+                    "meter_names": selected_names,
+                    "metrics": supplemental_metrics,
+                },
+            )
+            detail_error = tool_error_message(detail_result)
+            if detail_error:
+                lines.append(f"\nEk enerji değerleri alınamadı: {detail_error}")
+            else:
+                details = result_data(detail_result)
+                lines.append(f"\nİlk {len(selected_names)} sayacın ek değerleri:")
+                for item in details.get("meters", []):
+                    lines.append(f"\n{item.get('name', 'Adsız sayaç')}:")
+                    values = item.get("values", {})
+                    for extra_metric in supplemental_metrics:
+                        lines.append(
+                            f"• {display_metric_value(extra_metric, values.get(extra_metric))}"
+                        )
         return "\n".join(lines), events
 
     if wants_anomalies:
@@ -250,6 +537,9 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
         return "\n".join(lines), events
 
     if wants_grouping:
+        include_meter_names = any(phrase in normalized_query for phrase in (
+            "liste", "listele", "göster", "hangi",
+        ))
         if "kat" in normalized_query:
             attribute = "floor"
         elif "güç kaynağı" in normalized_query:
@@ -264,7 +554,10 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
             attribute = "active"
         grouping_result = call_meter_tool(
             "group_meters_by_attribute",
-            {"attribute": attribute, "include_meter_names": False},
+            {
+                "attribute": attribute,
+                "include_meter_names": include_meter_names,
+            },
         )
         error = tool_error_message(grouping_result)
         if error:
@@ -272,11 +565,23 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
         grouping = result_data(grouping_result)
         if grouping.get("error"):
             return str(grouping["error"]), events
-        lines = [f"Sayaçların {attribute} alanına göre dağılımı:"]
+        attribute_labels = {
+            "floor": "kat",
+            "power_source": "güç kaynağı",
+            "error_code": "hata kodu",
+            "phase_count": "faz sayısı",
+            "status_text": "durum",
+            "active": "aktiflik",
+        }
+        label = attribute_labels.get(attribute, attribute)
+        lines = [f"Sayaçların {label} alanına göre dağılımı:"]
         for group in grouping.get("groups", []):
             value = group.get("value")
             rendered = "Tanımsız" if value is None else str(value)
             lines.append(f"• {rendered}: {group.get('count', 0)} sayaç")
+            if include_meter_names:
+                for meter_name in group.get("meters", []):
+                    lines.append(f"  - {meter_name}")
         return "\n".join(lines), events
 
     if wants_fleet_summary:
@@ -382,6 +687,78 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
     if not device_id:
         return "Sayaç kimliği ThingsBoard yanıtında bulunamadı.", events
 
+    if wants_date_energy_comparison:
+        selected_dates = date_mentions[:2]
+        summaries = []
+        for selected_date in selected_dates:
+            day_end = selected_date + timedelta(days=1)
+            result = call_meter_tool(
+                "get_meter_energy_summary",
+                {
+                    "device_id": device_id,
+                    "start_ts": int(selected_date.timestamp() * 1000),
+                    "end_ts": int(day_end.timestamp() * 1000),
+                },
+            )
+            error = tool_error_message(result)
+            if error:
+                return f"{selected_date:%d.%m.%Y} tüketimi alınamadı: {error}", events
+            summary = result_data(result)
+            if summary.get("error"):
+                return f"{selected_date:%d.%m.%Y}: {summary['error']}", events
+            summaries.append((selected_date, float(summary["consumption_kwh"])))
+        first_date, first_value = summaries[0]
+        second_date, second_value = summaries[1]
+        difference = second_value - first_value
+        percentage = (difference / first_value * 100) if first_value else None
+        direction = "fazla" if difference > 0 else "az" if difference < 0 else "aynı"
+        return (
+            f"{meter_name} günlük enerji karşılaştırması:\n"
+            f"• {first_date:%d.%m.%Y}: {first_value:.3f} kWh\n"
+            f"• {second_date:%d.%m.%Y}: {second_value:.3f} kWh\n"
+            f"• Fark: {abs(difference):.3f} kWh ({direction})\n"
+            f"• Değişim: {abs(percentage):.2f}% {direction}" if percentage is not None else
+            f"{meter_name} günlük enerji karşılaştırması:\n"
+            f"• {first_date:%d.%m.%Y}: {first_value:.3f} kWh\n"
+            f"• {second_date:%d.%m.%Y}: {second_value:.3f} kWh\n"
+            f"• Fark: {abs(difference):.3f} kWh ({direction})\n"
+            "• Değişim yüzdesi: İlk gün tüketimi sıfır olduğu için hesaplanamadı.",
+            events,
+        )
+
+    if wants_seven_day_peak or wants_thirty_day_summary:
+        now_at = datetime.now(LOCAL_TIMEZONE)
+        today_start = now_at.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_count = 30 if wants_thirty_day_summary else 7
+        start_at = today_start - timedelta(days=day_count - 1)
+        series_result = call_meter_tool(
+            "get_meter_daily_energy_series",
+            {
+                "device_id": device_id,
+                "start_ts": int(start_at.timestamp() * 1000),
+                "end_ts": int(now_at.timestamp() * 1000),
+            },
+        )
+        error = tool_error_message(series_result)
+        if error:
+            return f"Günlük enerji serisi alınamadı: {error}", events
+        series = result_data(series_result)
+        if series.get("error"):
+            return str(series["error"]), events
+        maximum = series.get("maximum_consumption_day") or {}
+        lines = [f"{meter_name} son {day_count} günlük enerji analizi:"]
+        if wants_thirty_day_summary:
+            lines.append(
+                f"• Günlük ortalama: "
+                f"{series.get('average_daily_consumption_kwh', '-')} kWh"
+            )
+        lines.extend((
+            f"• En yüksek tüketimli gün: {maximum.get('date', '-')}",
+            f"• O günkü tüketim: {maximum.get('consumption_kwh', '-')} kWh",
+            f"• Geçerli gün sayısı: {series.get('valid_day_count', 0)}",
+        ))
+        return "\n".join(lines), events
+
     wants_context = any(word in normalized_query for word in (
         "konum", "bina", "kat", "model", "seri numarası",
         "seri no", "firmware", "nerede", "cihaz bilgi",
@@ -481,6 +858,139 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
         )
 
     now_ms = int(time.time() * 1000)
+
+    if wants_transmission_count:
+        try:
+            start_at, end_at, range_label = query_time_range(query)
+        except ValueError as exc:
+            return str(exc), events
+        history_result = call_meter_tool(
+            "get_meter_history",
+            {
+                "device_id": device_id,
+                "metric": "device_timestamp",
+                "start_ts": int(start_at.timestamp() * 1000),
+                "end_ts": int(end_at.timestamp() * 1000),
+                "limit": 1000,
+            },
+        )
+        error = tool_error_message(history_result)
+        if error:
+            return f"Telemetri kayıtları alınamadı: {error}", events
+        history = result_data(history_result)
+        if history.get("error"):
+            return str(history["error"]), events
+        points = history.get("points", [])
+        lines = [
+            f"{meter_name}, {range_label} aralığında "
+            f"{len(points)} kez veri göndermiştir."
+        ]
+        if points:
+            first_ts = int(points[0].get("timestamp", 0)) / 1000
+            last_ts = int(points[-1].get("timestamp", 0)) / 1000
+            first_at = datetime.fromtimestamp(first_ts, LOCAL_TIMEZONE)
+            last_at = datetime.fromtimestamp(last_ts, LOCAL_TIMEZONE)
+            lines.extend((
+                f"• İlk kayıt: {first_at:%H:%M:%S}",
+                f"• Son kayıt: {last_at:%H:%M:%S}",
+            ))
+        return "\n".join(lines), events
+
+    if wants_data_quality:
+        try:
+            start_at, end_at, range_label = query_time_range(query)
+        except ValueError as exc:
+            return str(exc), events
+        quality_result = call_meter_tool(
+            "analyze_meter_data_quality",
+            {
+                "device_id": device_id,
+                "start_ts": int(start_at.timestamp() * 1000),
+                "end_ts": int(end_at.timestamp() * 1000),
+            },
+        )
+        error = tool_error_message(quality_result)
+        if error:
+            return f"Veri kalitesi incelenemedi: {error}", events
+        quality = result_data(quality_result)
+        if quality.get("error"):
+            return str(quality["error"]), events
+        metrics = quality.get("metrics", {})
+        problems = [
+            (metric, details)
+            for metric, details in metrics.items()
+            if int(details.get("problem_count", 0) or 0) > 0
+        ]
+        lines = [
+            f"{meter_name} veri kalitesi ({range_label}):",
+            f"• Toplam paket: {quality.get('baseline_record_count', 0)}",
+            f"• Tam paket: {quality.get('complete_record_count', 0)}",
+            f"• Eksik/null içeren paket: {quality.get('incomplete_record_count', 0)}",
+        ]
+        if problems:
+            lines.append("• Sorunlu alanlar:")
+            for metric, details in problems:
+                label = METRIC_LABELS.get(metric, (metric, ""))[0]
+                lines.append(
+                    f"  - {label}: {details.get('null_count', 0)} null, "
+                    f"{details.get('missing_count', 0)} eksik"
+                )
+        else:
+            lines.append("• İncelenen temel alanlarda null veya eksik veri bulunmadı.")
+        return "\n".join(lines), events
+
+    if wants_metric_analysis:
+        try:
+            start_at, end_at, range_label = query_time_range(query)
+        except ValueError as exc:
+            return str(exc), events
+        metric = requested_analysis_metric(query)
+        threshold, comparison = requested_threshold(query)
+        analysis_result = call_meter_tool(
+            "analyze_meter_metric",
+            {
+                "device_id": device_id,
+                "metric": metric,
+                "start_ts": int(start_at.timestamp() * 1000),
+                "end_ts": int(end_at.timestamp() * 1000),
+                "threshold": threshold,
+                "comparison": comparison,
+            },
+        )
+        error = tool_error_message(analysis_result)
+        if error:
+            return f"Ölçüm analizi yapılamadı: {error}", events
+        analysis = result_data(analysis_result)
+        if analysis.get("error"):
+            return str(analysis["error"]), events
+        label, unit = METRIC_LABELS.get(metric, (metric, ""))
+        suffix = f" {unit}" if unit else ""
+
+        def render_point(point: Any) -> str:
+            if not isinstance(point, dict):
+                return "-"
+            timestamp = point.get("timestamp")
+            when = "bilinmiyor"
+            if timestamp is not None:
+                when = datetime.fromtimestamp(
+                    int(timestamp) / 1000, LOCAL_TIMEZONE
+                ).strftime("%H:%M:%S")
+            return f"{point.get('value', '-')}{suffix} ({when})"
+
+        lines = [
+            f"{meter_name} {label} analizi ({range_label}):",
+            f"• Ölçüm sayısı: {analysis.get('numeric_point_count', 0)}",
+            f"• Minimum: {render_point(analysis.get('minimum'))}",
+            f"• Maksimum: {render_point(analysis.get('maximum'))}",
+            f"• Ortalama: {analysis.get('average', '-')}{suffix}",
+        ]
+        if threshold is not None and comparison:
+            direction = "üstündeki" if comparison == "gt" else "altındaki"
+            lines.append(
+                f"• {threshold:g}{suffix} {direction} ölçüm: "
+                f"{analysis.get('threshold_match_count', 0)}"
+            )
+        return "\n".join(lines), events
 
     if wants_period_comparison:
         now = datetime.now()
@@ -663,27 +1173,31 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
         item = measurements.get(key)
         if isinstance(item, dict):
             value = item.get("value")
-            return "-" if value is None else str(value)
-        return "-"
+        else:
+            value = item
+        return "-" if value is None else str(value)
 
     if wants_phase_comparison:
         if any(term in normalized_query for term in ("gerilim", "voltaj")):
             metric_prefix = "voltage_l"
+            metric_suffix = "_v"
             metric_label = "gerilim"
             unit = "V"
         elif any(term in normalized_query for term in ("akım", "amper")):
             metric_prefix = "current_l"
+            metric_suffix = "_a"
             metric_label = "akım"
             unit = "A"
         else:
             metric_prefix = "power_factor_l"
+            metric_suffix = ""
             metric_label = "güç faktörü"
             unit = ""
 
         phase_values = []
         lines = [f"{meter_name} faz {metric_label} karşılaştırması:"]
         for phase in sorted(requested_phases):
-            key = f"{metric_prefix}{phase}"
+            key = f"{metric_prefix}{phase}{metric_suffix}"
             value = measurement_value(key)
             suffix = f" {unit}" if unit else ""
             lines.append(f"• L{phase}: {value}{suffix}")

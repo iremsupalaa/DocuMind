@@ -91,6 +91,10 @@ METER_TOOL_NAMES = {
     "get_latest_meter_reading",
     "get_meter_context",
     "get_meter_history",
+    "analyze_meter_data_quality",
+    "analyze_meter_metric",
+    "get_meter_daily_energy_series",
+    "rank_meters_by_interval_energy",
     "get_meter_energy_summary",
     "get_meter_connection_status",
     "compare_meter_devices",
@@ -110,6 +114,10 @@ Kullanıcı bir sayaç belirtmemişse önce list_meter_devices aracını kullan.
 Enerji tüketimi için get_meter_energy_summary,
 anlık değerler için get_latest_meter_reading,
 geçmiş için get_meter_history,
+null veya eksik telemetri analizi için analyze_meter_data_quality,
+min, maks, ortalama ve eşik analizi için analyze_meter_metric,
+günlük tüketim serisi için get_meter_daily_energy_series,
+zaman aralığı tüketim sıralaması için rank_meters_by_interval_energy,
 bağlantı için get_meter_connection_status aracını kullan.
 Birden fazla sayacı karşılaştırmak için compare_meter_devices,
 sıralama için rank_meters_by_metric,
@@ -545,6 +553,8 @@ def format_meter_answer_with_model(
         "faz gerilim karşılaştırması:",
         "faz akım karşılaştırması:",
         "faz güç faktörü karşılaştırması:",
+        "ölçümüne göre sayaç sıralaması:",
+        "kez veri göndermiştir",
     )
     if any(message in answer.casefold() for message in protected_messages):
         return answer, False
@@ -605,12 +615,14 @@ def run_agent(
         if message.get("role") == "user"
     ), "")
     normalized_query = user_query.casefold()
-    thingsboard_terms = (
-        "thingsboard", "cihaz", "telemetri", "sensör", "sensor",
-        "hava kalitesi", "ölçüm", "sıcaklık", "sicaklik", "nem",
+    air_quality_terms = (
+        "hava kalitesi", "hava kalite", "sıcaklık", "sicaklik", "nem",
         "co₂", "co2", "pm2.5", "pm10", "voc", "aqi", "batarya",
         "list_air_quality_devices", "get_latest_air_quality",
-        "get_device_context",
+        "hava kalitesi cihazı", "hava kalite cihazı",
+    )
+    generic_device_terms = (
+        "thingsboard", "cihaz", "cihazlar", "telemetri", "ölçüm",
     )
     meter_terms = (
         "sayaç", "sayac", "meter", "kwh", "kilovat", "kilowatt",
@@ -628,11 +640,19 @@ def run_agent(
         normalized_query,
         flags=re.IGNORECASE,
     ))
-    has_meter_intent = ( #kullanıcının sorusunda belirlenen ifadeler veya sayaç adı varsa true döner
+    has_air_quality_intent = any(
+        term in normalized_query for term in air_quality_terms
+    )
+    has_generic_device_intent = any(
+        term in normalized_query for term in generic_device_terms
+    )
+    has_meter_intent = (
         has_meter_identifier
-        or any(
-        term in normalized_query
-        for term in meter_terms
+        or any(term in normalized_query for term in meter_terms)
+        or (
+            can_use_meter
+            and has_generic_device_intent
+            and not has_air_quality_intent
         )
     )
 
@@ -641,9 +661,7 @@ def run_agent(
         and has_meter_intent
     )
     
-    has_thingsboard_intent = any(
-        term in normalized_query for term in thingsboard_terms
-    )
+    has_thingsboard_intent = has_air_quality_intent
     # Otomatik modda hava kalitesiyle ilgili doğal dil sorularını,
     # belge aramasından önce ThingsBoard akışına yönlendir. Sayaç akışı
     # daha özel olduğu için önceliklidir.
@@ -900,7 +918,25 @@ def run_agent(
             )
             events.extend(meter_events)
 
-            if METER_MODEL_FORMATTING:
+            deterministic_tools = {
+                "analyze_meter_data_quality",
+                "analyze_meter_metric",
+                "get_meter_daily_energy_series",
+                "rank_meters_by_interval_energy",
+                "get_meter_history",
+                "get_meter_energy_summary",
+                "compare_meter_devices",
+                "rank_meters_by_metric",
+                "get_meter_fleet_summary",
+                "find_meter_anomalies",
+                "group_meters_by_attribute",
+            }
+            used_tools = {
+                str(event.get("tool", ""))
+                for event in meter_events
+                if event.get("type") == "tool_call"
+            }
+            if METER_MODEL_FORMATTING and not (used_tools & deterministic_tools):
                 started_at = time.perf_counter()
                 meter_answer, model_used = format_meter_answer_with_model(
                     model,
