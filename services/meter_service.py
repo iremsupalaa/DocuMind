@@ -137,6 +137,23 @@ def explicit_query_dates(query: str) -> List[datetime]:
     return dates
 
 
+def requested_floor(query: str) -> str:
+    """3. kat, 3 katta veya 3. kattaki ifadelerinden katı çıkarır."""
+    match = re.search(r"\b(\d{1,3})\.?\s*kat", query.casefold())
+    return match.group(1) if match else ""
+
+
+def requested_coordinates(query: str) -> Tuple[float | None, float | None]:
+    """40.99758, 29.101014 biçimindeki koordinat çiftini çıkarır."""
+    match = re.search(
+        r"(?<!\d)(-?\d{1,2}\.\d+)\s*[,;]\s*(-?\d{1,3}\.\d+)(?!\d)",
+        query,
+    )
+    if not match:
+        return None, None
+    return float(match.group(1)), float(match.group(2))
+
+
 def requested_threshold(query: str) -> Tuple[float | None, str | None]:
     """230 V üstü veya 5 A altı gibi eşik ifadelerini çözümler."""
     match = re.search(
@@ -320,6 +337,33 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
         normalized_query,
     ))
     date_mentions = explicit_query_dates(query)
+    floor_filter = requested_floor(query)
+    latitude_filter, longitude_filter = requested_coordinates(query)
+    bulk_threshold, bulk_comparison = requested_threshold(query)
+    wants_bulk_threshold_analysis = (
+        bool(date_mentions)
+        and bulk_threshold is not None
+        and bulk_comparison is not None
+        and not query_meter_names(query)
+        and any(term in normalized_query for term in (
+            "frekans", "hz", "gerilim", "voltaj", "akım", "amper",
+            "güç faktörü", "power factor",
+        ))
+        and any(term in normalized_query for term in (
+            "sırala", "listele", "göster", "bul", "hangi sayaç",
+        ))
+    )
+    wants_location_list = (
+        bool(floor_filter) or latitude_filter is not None
+    ) and any(phrase in normalized_query for phrase in (
+        "listele", "listesi", "bul", "göster", "hangi sayaç",
+    ))
+    wants_location_energy_ranking = (
+        bool(date_mentions)
+        and any(term in normalized_query for term in ("katları", "katlara", "kat bazında"))
+        and any(term in normalized_query for term in ("enerji", "tüketim", "kwh"))
+        and any(term in normalized_query for term in ("sırala", "en yüksek", "en fazla", "karşılaştır"))
+    )
     wants_date_energy_comparison = (
         len(date_mentions) >= 2
         and wants_comparison
@@ -335,12 +379,123 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
     )
     wants_interval_energy_ranking = (
         bool(date_mentions)
-        and "sayaç" in normalized_query
+        and any(stem in normalized_query for stem in ("sayaç", "sayac"))
         and any(phrase in normalized_query for phrase in (
             "en çok enerji tüketen", "en fazla enerji tüketen",
             "en yüksek tüketimli", "enerji tüketen 5", "tüketen ilk",
         ))
     )
+
+    if wants_bulk_threshold_analysis:
+        try:
+            start_at, end_at, range_label = query_time_range(query)
+        except ValueError as exc:
+            return str(exc), events
+        metric = requested_analysis_metric(query)
+        result = call_meter_tool(
+            "find_meters_by_metric_threshold",
+            {
+                "metric": metric,
+                "start_ts": int(start_at.timestamp() * 1000),
+                "end_ts": int(end_at.timestamp() * 1000),
+                "threshold": bulk_threshold,
+                "comparison": bulk_comparison,
+                "floor": floor_filter,
+                "limit": 100,
+            },
+        )
+        error = tool_error_message(result)
+        if error:
+            return f"Toplu eşik analizi yapılamadı: {error}", events
+        data = result_data(result)
+        if data.get("error"):
+            return str(data["error"]), events
+        meters = data.get("meters", [])
+        label, unit = METRIC_LABELS.get(metric, (metric, ""))
+        direction = "altına düşen" if bulk_comparison == "lt" else "üstüne çıkan"
+        location_text = f" {floor_filter}. katta" if floor_filter else ""
+        if not meters:
+            return (
+                f"{range_label}{location_text} {label} değeri "
+                f"{bulk_threshold:g} {unit} {direction} sayaç bulunmadı.\n"
+                f"• İncelenen sayaç: {data.get('evaluated_meter_count', 0)}\n"
+                f"• Bu aralıkta ölçümü bulunmayan sayaç: {data.get('no_data_meter_count', 0)}",
+                events,
+            )
+        lines = [
+            f"{range_label}{location_text} {label} değeri "
+            f"{bulk_threshold:g} {unit} {direction} sayaçlar:"
+        ]
+        for index, meter in enumerate(meters, 1):
+            lines.append(
+                f"{index}. {meter.get('name', 'Adsız sayaç')}: "
+                f"{meter.get('threshold_match_count', 0)} ölçüm"
+            )
+        lines.append(f"Toplam eşleşen sayaç: {data.get('matched_meter_count', len(meters))}")
+        return "\n".join(lines), events
+
+    if wants_location_energy_ranking:
+        try:
+            start_at, end_at, range_label = query_time_range(query)
+        except ValueError as exc:
+            return str(exc), events
+        result = call_meter_tool(
+            "rank_meter_locations_by_energy",
+            {
+                "start_ts": int(start_at.timestamp() * 1000),
+                "end_ts": int(end_at.timestamp() * 1000),
+                "attribute": "floor",
+            },
+        )
+        error = tool_error_message(result)
+        if error:
+            return f"Kat bazlı enerji sıralaması yapılamadı: {error}", events
+        data = result_data(result)
+        if data.get("error"):
+            return str(data["error"]), events
+        groups = data.get("groups", [])
+        if not groups:
+            evaluated = data.get("evaluated_meter_count", 0)
+            insufficient = data.get("no_energy_data_meter_count", evaluated)
+            return (
+                f"{range_label} için kat bazında hesaplanabilir enerji tüketimi bulunamadı.\n"
+                f"• İncelenen sayaç: {evaluated}\n"
+                f"• Bu zaman aralığında yeterli e_tkwh verisi olmayan sayaç: {insufficient}",
+                events,
+            )
+        lines = [f"{range_label} kat bazlı enerji tüketimi:"]
+        for index, group in enumerate(groups, 1):
+            floor_value = group.get("value")
+            floor_label = "Tanımsız" if floor_value is None else f"{floor_value}. kat"
+            lines.append(
+                f"{index}. {floor_label}: {group.get('consumption_kwh', '-')} kWh "
+                f"({group.get('meter_count', 0)} sayaç)"
+            )
+        return "\n".join(lines), events
+
+    if wants_location_list:
+        result = call_meter_tool(
+            "find_meters_by_location",
+            {
+                "floor": floor_filter,
+                "latitude": latitude_filter,
+                "longitude": longitude_filter,
+            },
+        )
+        error = tool_error_message(result)
+        if error:
+            return f"Konuma göre sayaçlar alınamadı: {error}", events
+        data = result_data(result)
+        if data.get("error"):
+            return str(data["error"]), events
+        lines = [f"Konum filtresine uyan {data.get('count', 0)} sayaç bulundu:"]
+        for meter in data.get("meters", []):
+            lines.append(
+                f"• {meter.get('name', 'Adsız sayaç')} — "
+                f"Kat: {meter.get('floor', '-')}, "
+                f"Konum: {meter.get('latitude', '-')}, {meter.get('longitude', '-')}"
+            )
+        return "\n".join(lines), events
 
     if wants_interval_energy_ranking:
         try:
@@ -355,6 +510,7 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
                 "start_ts": int(start_at.timestamp() * 1000),
                 "end_ts": int(end_at.timestamp() * 1000),
                 "limit": limit,
+                "floor": floor_filter,
             },
         )
         error = tool_error_message(ranking_result)
@@ -363,8 +519,22 @@ def answer_meter_question( #sayaç sorusu için gereken aracı çalıştırır
         ranking = result_data(ranking_result)
         if ranking.get("error"):
             return str(ranking["error"]), events
-        lines = [f"{range_label} tüketimi en yüksek {limit} sayaç:"]
-        for index, meter in enumerate(ranking.get("meters", []), 1):
+        meters = ranking.get("meters", [])
+        evaluated = ranking.get("evaluated_meter_count", 0)
+        insufficient = ranking.get("no_energy_data_meter_count", evaluated)
+        if not meters:
+            if floor_filter and evaluated == 0:
+                return f"{floor_filter}. katta eşleşen sayaç bulunamadı.", events
+            location_text = f" {floor_filter}. katta" if floor_filter else ""
+            return (
+                f"{range_label}{location_text} için tüketimi hesaplanabilen sayaç bulunamadı.\n"
+                f"• Eşleşen sayaç: {evaluated}\n"
+                f"• Bu zaman aralığında yeterli e_tkwh verisi olmayan sayaç: {insufficient}",
+                events,
+            )
+        location_suffix = f" {floor_filter}. katta" if floor_filter else ""
+        lines = [f"{range_label}{location_suffix} tüketimi en yüksek {limit} sayaç:"]
+        for index, meter in enumerate(meters, 1):
             lines.append(
                 f"{index}. {meter.get('name', 'Adsız sayaç')}: "
                 f"{meter.get('consumption_kwh', '-')} kWh"
